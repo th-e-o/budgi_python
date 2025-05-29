@@ -1,6 +1,5 @@
-# ui/components/inputs.py
 import streamlit as st
-from typing import Tuple, Optional, Any  # <-- Ajout de l'import Any
+from typing import Tuple, Optional, Any
 
 class InputComponents:
     """Composants pour les entrées utilisateur"""
@@ -17,15 +16,19 @@ class InputComponents:
         # Layout en colonnes
         input_col, actions_col = st.columns([5, 1])
         
+        # Obtenir la clé dynamique
+        input_key = f"user_message_input_{st.session_state.get('message_input_key', 0)}"
+        
         with input_col:
-            # Zone de texte principale
+            # Zone de texte principale avec clé dynamique
             user_input = st.text_area(
                 "Message",
-                key="user_message_input",
-                placeholder="Tapez votre message... (Shift+Enter pour nouvelle ligne)",
+                key=input_key,
+                placeholder="Tapez votre message... (Enter pour envoyer, Shift+Enter pour nouvelle ligne)",
                 height=80,
                 label_visibility="collapsed",
-                max_chars=2000
+                max_chars=2000,
+                value=""  # Toujours vide car nouvelle clé
             )
         
         with actions_col:
@@ -52,6 +55,44 @@ class InputComponents:
                 )
         
         st.markdown('</div>', unsafe_allow_html=True)
+        
+        # JavaScript pour gérer la touche Enter
+        st.markdown(f"""
+        <script>
+        // Attendre que le DOM soit prêt
+        setTimeout(function() {{
+            const textarea = document.querySelector('textarea[data-testid="{input_key}"]');
+            if (!textarea) {{
+                // Chercher par aria-label si data-testid ne fonctionne pas
+                const textareas = document.querySelectorAll('textarea');
+                for (let ta of textareas) {{
+                    if (ta.getAttribute('aria-label') === 'Message') {{
+                        setupEnterHandler(ta);
+                        break;
+                    }}
+                }}
+            }} else {{
+                setupEnterHandler(textarea);
+            }}
+            
+            function setupEnterHandler(textarea) {{
+                if (!textarea.hasAttribute('data-enter-setup')) {{
+                    textarea.setAttribute('data-enter-setup', 'true');
+                    textarea.addEventListener('keydown', function(e) {{
+                        if (e.key === 'Enter' && !e.shiftKey) {{
+                            e.preventDefault();
+                            // Trouver et cliquer sur le bouton d'envoi
+                            const sendBtn = document.querySelector('button[kind="primary"]');
+                            if (sendBtn) {{
+                                sendBtn.click();
+                            }}
+                        }}
+                    }});
+                }}
+            }}
+        }}, 100);
+        </script>
+        """, unsafe_allow_html=True)
         
         # Validation de l'input
         message_to_send = None

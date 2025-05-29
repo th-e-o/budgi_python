@@ -1,6 +1,8 @@
 # ui/components/sidebar.py
 import streamlit as st
 from typing import Callable, Dict, Any
+from datetime import datetime  # Import manquant
+import openpyxl  # Import manquant pour BPSS
 
 class SidebarComponents:
     """Composants pour la sidebar avec les outils"""
@@ -54,7 +56,7 @@ class SidebarComponents:
     
     @staticmethod
     def render_excel_module(services: Dict[str, Any]):
-        """Rendu du module Excel"""
+        """Rendu du module Excel (Mesures Catégorielles)"""
         uploaded = st.file_uploader(
             "📂 Charger un fichier Excel",
             type=['xlsx'],
@@ -62,7 +64,22 @@ class SidebarComponents:
             help="Formats supportés : .xlsx"
         )
         
-        if uploaded and st.session_state.get('excel_workbook'):
+        if uploaded:
+            # Charger le fichier si pas déjà fait
+            if not st.session_state.get('excel_workbook'):
+                try:
+                    wb = services['excel_handler'].load_workbook_from_bytes(uploaded.getbuffer())
+                    st.session_state.excel_workbook = wb
+                    st.session_state.current_file = {
+                        'name': uploaded.name,
+                        'content': uploaded.getbuffer(),
+                        'path': None
+                    }
+                except Exception as e:
+                    st.error(f"Erreur chargement Excel: {str(e)}")
+                    return None
+        
+        if st.session_state.get('excel_workbook'):
             wb = st.session_state.excel_workbook
             sheets = wb.sheetnames
             
@@ -78,6 +95,9 @@ class SidebarComponents:
                 col1, col2 = st.columns(2)
                 
                 with col1:
+                    if st.button("🔍 Parser formules", use_container_width=True, key="parse_formulas"):
+                        return {'action': 'parse_excel', 'sheet': selected}
+                    
                     if st.button("🔧 Appliquer formules", use_container_width=True, key="apply_formulas"):
                         return {'action': 'apply_formulas', 'sheet': selected}
                     
@@ -93,12 +113,15 @@ class SidebarComponents:
                 
                 # Aperçu des données
                 with st.expander("👁️ Aperçu des données", expanded=False):
-                    df = services['excel_handler'].sheet_to_dataframe(wb, selected)
-                    st.dataframe(
-                        df.head(10),
-                        use_container_width=True,
-                        height=200
-                    )
+                    try:
+                        df = services['excel_handler'].sheet_to_dataframe(wb, selected)
+                        st.dataframe(
+                            df.head(10),
+                            use_container_width=True,
+                            height=200
+                        )
+                    except Exception as e:
+                        st.error(f"Erreur affichage: {str(e)}")
         
         return None
     
@@ -116,11 +139,18 @@ class SidebarComponents:
             import json
             try:
                 data = json.load(uploaded)
+                st.session_state.json_data = data
                 
                 # Statistiques
                 st.markdown("### 📊 Informations")
                 if 'tags' in data:
                     st.metric("Nombre de tags", len(data.get('tags', [])))
+                    
+                    # Extraire et afficher les labels
+                    labels = services['json_helper'].extract_labels(data)
+                    if labels:
+                        with st.expander("🏷️ Labels extraits", expanded=False):
+                            st.write(labels)
                     
                     # Actions
                     col1, col2 = st.columns(2)
@@ -129,8 +159,11 @@ class SidebarComponents:
                             return {'action': 'analyze_labels', 'data': data}
                     
                     with col2:
-                        if st.button("🔄 Mettre à jour", use_container_width=True):
-                            return {'action': 'update_json', 'data': data}
+                        if st.button("🔄 Mettre à jour tags", use_container_width=True):
+                            if st.session_state.get('excel_workbook'):
+                                return {'action': 'update_json_tags', 'data': data}
+                            else:
+                                st.warning("Chargez d'abord un fichier Excel")
                 
                 # Aperçu
                 with st.expander("📋 Aperçu JSON", expanded=False):

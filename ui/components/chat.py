@@ -1,4 +1,4 @@
-# ui/components/chat.py
+# ui/components/chat.py - Version corrigée sans quick actions
 import streamlit as st
 from datetime import datetime
 from typing import Dict, List, Optional
@@ -100,34 +100,9 @@ class ChatComponents:
     
     @staticmethod
     def render_quick_actions():
-        """Affiche les actions rapides"""
-        # Ces actions sont identiques à celles de l'app R mais adaptées pour Python
-        actions = [
-            ("💰 Aide budgétaire", "Aide-moi avec mon budget"),
-            ("🛠️ Outil BPSS", "Comment utiliser l'outil BPSS ?"),
-            ("📊 Extraction données", "Extrais les données de mon fichier"),
-            ("📈 Analyse", "Analyse mon fichier Excel"),
-            ("❓ Aide", "Comment puis-je t'aider ?")
-        ]
-        
-        html = '<div class="quick-actions">'
-        for icon_text, message in actions:
-            html += f'''
-            <button class="quick-action-btn" onclick="
-                const textarea = document.querySelector('textarea[aria-label=\\'Message\\']');
-                if (textarea) {{
-                    const nativeTextAreaValueSetter = Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, 'value').set;
-                    nativeTextAreaValueSetter.call(textarea, '{message}');
-                    const ev = new Event('input', {{ bubbles: true }});
-                    textarea.dispatchEvent(ev);
-                }}
-            ">
-                {icon_text}
-            </button>
-            '''
-        html += '</div>'
-        
-        return html
+        """Affiche les actions rapides - DÉSACTIVÉ"""
+        # Retourner une chaîne vide pour ne rien afficher
+        return ""
     
     @staticmethod
     def render_file_preview(filename: str):

@@ -369,29 +369,120 @@ def get_javascript() -> str:
     <script>
         // Auto-scroll to bottom
         function scrollToBottom() {
-            const messages = document.querySelector('.chat-messages');
-            if (messages) {
-                messages.scrollTop = messages.scrollHeight;
+            // Chercher tous les containers possibles
+            const messagesContainers = document.querySelectorAll('.chat-messages, [data-testid="stVerticalBlock"] > div:has(.message-wrapper)');
+            messagesContainers.forEach(container => {
+                if (container.scrollHeight > container.clientHeight) {
+                    container.scrollTop = container.scrollHeight;
+                }
+            });
+            
+            // Chercher spécifiquement les containers avec hauteur fixe
+            const fixedHeightContainers = document.querySelectorAll('div[style*="height: 500px"], div[style*="overflow-y: auto"]');
+            fixedHeightContainers.forEach(container => {
+                if (container.querySelector('.message-wrapper, .chat-messages')) {
+                    container.scrollTop = container.scrollHeight;
+                }
+            });
+        }
+        
+        // Fonction pour effacer le champ de saisie
+        function clearMessageInput() {
+            const textarea = document.querySelector('textarea[aria-label="Message"]');
+            if (textarea) {
+                textarea.value = '';
+                // Déclencher l'événement pour que Streamlit mette à jour
+                const event = new Event('input', { bubbles: true });
+                textarea.dispatchEvent(event);
             }
         }
         
-        // Call on load and after updates
-        window.addEventListener('load', scrollToBottom);
+        // Gérer la touche Enter
+        function setupEnterKeyHandler() {
+            const textarea = document.querySelector('textarea[aria-label="Message"]');
+            if (textarea && !textarea.hasAttribute('data-enter-handler')) {
+                textarea.setAttribute('data-enter-handler', 'true');
+                
+                textarea.addEventListener('keydown', function(e) {
+                    if (e.key === 'Enter' && !e.shiftKey) {
+                        e.preventDefault();
+                        
+                        // Trouver et cliquer sur le bouton d'envoi
+                        const sendButton = document.querySelector('button[kind="primary"]');
+                        if (!sendButton) {
+                            // Chercher par d'autres moyens
+                            const buttons = document.querySelectorAll('button');
+                            for (let btn of buttons) {
+                                if (btn.textContent.includes('➤') || btn.getAttribute('aria-label')?.includes('send')) {
+                                    btn.click();
+                                    break;
+                                }
+                            }
+                        } else {
+                            sendButton.click();
+                        }
+                    }
+                });
+            }
+        }
         
-        // Watch for new messages
-        const observer = new MutationObserver(scrollToBottom);
-        const messagesContainer = document.querySelector('.chat-messages');
-        if (messagesContainer) {
-            observer.observe(messagesContainer, { childList: true, subtree: true });
+        // Observer pour nouveaux messages et réinitialiser les handlers
+        function setupObserver() {
+            const observer = new MutationObserver((mutations) => {
+                // Scroll automatique si nouveau message
+                let shouldScroll = false;
+                mutations.forEach(mutation => {
+                    if (mutation.addedNodes.length > 0) {
+                        mutation.addedNodes.forEach(node => {
+                            if (node.classList && (node.classList.contains('message-wrapper') || 
+                                node.querySelector && node.querySelector('.message-wrapper'))) {
+                                shouldScroll = true;
+                            }
+                        });
+                    }
+                });
+                
+                if (shouldScroll) {
+                    setTimeout(scrollToBottom, 100);
+                }
+                
+                // Réinitialiser le handler Enter au cas où le textarea est recréé
+                setupEnterKeyHandler();
+            });
+            
+            // Observer le body entier pour capturer tous les changements
+            observer.observe(document.body, { 
+                childList: true, 
+                subtree: true,
+                attributes: false,
+                characterData: false
+            });
         }
         
         // Quick action handlers
         function setQuickAction(text) {
-            const input = document.querySelector('textarea[aria-label="Message"]');
-            if (input) {
-                input.value = text;
-                input.dispatchEvent(new Event('input', { bubbles: true }));
+            const textarea = document.querySelector('textarea[aria-label="Message"]');
+            if (textarea) {
+                textarea.value = text;
+                const event = new Event('input', { bubbles: true });
+                textarea.dispatchEvent(event);
+                textarea.focus();
             }
         }
+        
+        // Initialisation
+        document.addEventListener('DOMContentLoaded', function() {
+            setupEnterKeyHandler();
+            setupObserver();
+            scrollToBottom();
+        });
+        
+        // Réinitialiser périodiquement (pour gérer les updates Streamlit)
+        setInterval(function() {
+            setupEnterKeyHandler();
+        }, 1000);
+        
+        // Scroll initial après un court délai
+        setTimeout(scrollToBottom, 500);
     </script>
     """
