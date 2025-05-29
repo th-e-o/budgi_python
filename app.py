@@ -4,6 +4,7 @@ import asyncio
 from pathlib import Path
 from datetime import datetime
 import logging
+import openpyxl
 
 # Configuration de la page
 st.set_page_config(
@@ -223,25 +224,32 @@ def get_enhanced_styles():
 
 
 async def handle_file_upload(uploaded_file):
-    """Gère l'upload d'un fichier"""
+    """Gère l'upload d'un fichier - VERSION CORRIGÉE"""
+    # CORRECTION: Vérifier si c'est un nouveau fichier
+    if 'last_uploaded_file' in st.session_state and \
+       st.session_state.last_uploaded_file == uploaded_file.name:
+        return  # Fichier déjà traité
+    
     # Notifier l'upload
     st.session_state.chat_history.append({
         'role': 'user',
         'content': f"📎 Fichier envoyé : {uploaded_file.name}",
         'timestamp': datetime.now().strftime("%H:%M"),
-        'file_name': uploaded_file.name  # Ajouter le nom du fichier
+        'file_name': uploaded_file.name
     })
     
     st.session_state.is_typing = True
     st.session_state.scroll_to_bottom = True
+    st.session_state.last_uploaded_file = uploaded_file.name  # AJOUT: Marquer comme traité
     st.rerun()
 
 async def process_file(uploaded_file):
-    """Traite le fichier de manière asynchrone"""
+    """Traite le fichier de manière asynchrone - VERSION CORRIGÉE"""
     try:
         # Créer un fichier temporaire
-        temp_path = Path(f"/tmp/{uploaded_file.name}")
-        temp_path.parent.mkdir(exist_ok=True)
+        temp_dir = Path("/tmp")
+        temp_dir.mkdir(exist_ok=True)  # AJOUT: Créer le dossier si nécessaire
+        temp_path = temp_dir / uploaded_file.name
         
         with open(temp_path, "wb") as f:
             f.write(uploaded_file.getbuffer())
@@ -255,7 +263,7 @@ async def process_file(uploaded_file):
             'path': str(temp_path),
             'type': uploaded_file.name.split('.')[-1].lower()
         }
-        
+
         # Ajouter aussi dans l'historique pour l'extraction
         st.session_state.chat_history.append({
             'role': 'system',
@@ -297,11 +305,12 @@ async def process_file(uploaded_file):
     except Exception as e:
         logger.error(f"Erreur lors de l'upload du fichier: {str(e)}")
         st.error(f"Erreur lors du traitement du fichier: {str(e)}")
+    finally:
+        st.session_state.is_typing = False
+        st.session_state.scroll_to_bottom = True
     
-    st.session_state.is_typing = False
-    st.session_state.scroll_to_bottom = True
     st.rerun()
-
+    
 def handle_tool_action(action: dict):
     """Gère les actions des outils"""
     action_type = action.get('action')
@@ -365,24 +374,34 @@ async def process_bpss(data: dict):
             st.error(f"Erreur BPSS: {str(e)}")
 
 async def extract_budget_data():
-    """Extrait les données budgétaires"""
+    """Extrait les données budgétaires - VERSION CORRIGÉE"""
+    # CORRECTION: Meilleure gestion de la récupération du contenu
+    content = None
+    
     # D'abord vérifier current_file
-    if st.session_state.current_file and st.session_state.current_file.get('content'):
+    if st.session_state.get('current_file') and st.session_state.current_file.get('content'):
         content = st.session_state.current_file['content']
+        logger.info("Contenu trouvé dans current_file")
     else:
         # Sinon, chercher dans l'historique
-        content = None
         for msg in reversed(st.session_state.chat_history):
             if msg.get('meta') == 'file_content':
                 content = msg['content']
+                logger.info("Contenu trouvé dans l'historique")
                 break
-        
-        if not content:
-            st.error("Aucun fichier chargé pour l'extraction")
-            return
+    
+    if not content:
+        st.error("Aucun fichier chargé pour l'extraction. Veuillez d'abord envoyer un fichier.")
+        return
     
     with st.spinner("Extraction en cours..."):
         try:
+            # AJOUT: Limiter la taille du contenu envoyé
+            max_content_length = 10000
+            if len(content) > max_content_length:
+                logger.warning(f"Contenu tronqué de {len(content)} à {max_content_length} caractères")
+                content = content[:max_content_length] + "\n\n[... contenu tronqué ...]"
+            
             data = await services['budget_extractor'].extract(
                 content,
                 services['llm_client']
@@ -390,15 +409,17 @@ async def extract_budget_data():
             
             if data:
                 st.session_state.extracted_data = data
-                st.success(f"✅ {len(data)} entrées extraites!")
+                st.success(f"✅ {len(data)} entrées budgétaires extraites!")
                 
                 # Afficher les données dans un modal
                 show_budget_data_modal(data)
             else:
-                st.warning("Aucune donnée trouvée")
+                st.warning("Aucune donnée budgétaire trouvée dans le fichier.")
                 
         except Exception as e:
-            st.error(f"Erreur extraction: {str(e)}")
+            logger.error(f"Erreur extraction: {str(e)}")
+            st.error(f"Erreur lors de l'extraction: {str(e)}")
+
 
 def show_budget_data_modal(data):
     """Affiche les données budgétaires extraites"""
@@ -503,30 +524,27 @@ def export_excel():
     )
 
 def main():
+    """Fonction principale - VERSION CORRIGÉE"""
     # Initialiser l'état
     init_session_state()
     
-    # Ajouter scroll_to_bottom à init_session_state
-    if 'scroll_to_bottom' not in st.session_state:
-        st.session_state.scroll_to_bottom = False
-    
-    # Gérer les messages en attente de traitement
+    # CORRECTION: Gérer les messages en attente de manière plus robuste
     if st.session_state.is_typing and len(st.session_state.chat_history) > 0:
         last_msg = st.session_state.chat_history[-1]
-        if last_msg['role'] == 'user':
+        if last_msg['role'] == 'user' and not last_msg['content'].startswith("📎"):
+            # Message texte à traiter
             asyncio.run(process_message())
-    
-    # Gérer les fichiers en attente
-    for msg in st.session_state.chat_history:
-        if msg['role'] == 'user' and msg['content'].startswith("📎 Fichier envoyé :") and st.session_state.is_typing:
-            # Récupérer le fichier depuis file_upload_chat
-            file_to_process = st.session_state.get('file_upload_chat')
-            if file_to_process:
-                asyncio.run(process_file(file_to_process))
-            break
+        elif last_msg['role'] == 'user' and last_msg['content'].startswith("📎"):
+            # Fichier à traiter
+            # Chercher le fichier dans les widgets file_uploader
+            for key in ['file_upload', 'file_upload_chat']:
+                file_to_process = st.session_state.get(key)
+                if file_to_process and file_to_process.name == last_msg.get('file_name'):
+                    asyncio.run(process_file(file_to_process))
+                    break
     
     # Gérer les actions en attente
-    if st.session_state.pending_action:
+    if st.session_state.get('pending_action'):
         action = st.session_state.pending_action
         st.session_state.pending_action = None
         
