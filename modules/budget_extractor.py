@@ -1,65 +1,94 @@
+# modules/budget_extractor.py
 import re
 import pandas as pd
 from typing import List, Dict, Optional
 import logging
-from dataclasses import dataclass
 
 logger = logging.getLogger(__name__)
 
-@dataclass
-class BudgetEntry:
-    axe: str
-    description: str
-    montant: float
-    unite: str = "€"
-    probabilite: float = 0.0
-    date: Optional[str] = None
-    nature: Optional[str] = None
-    source_phrase: Optional[str] = None
-    cellule_cible: Optional[str] = None
-
 class BudgetExtractor:
-    """Extrait et traite les données budgétaires"""
+    """Extrait les données budgétaires depuis du texte"""
     
     def __init__(self):
-        self.patterns = {
-            'montant': r'(\d{1,3}(?:\s?\d{3})*(?:,\d+)?)\s*(M€|millions?\s*d[\'']?euros?|Md€|milliards?\s*d[\'']?euros?)',
-            'reference': r'[A-Z]+\d+(?::[A-Z]+\d+)?',
-            'pourcentage': r'\d+(?:,\d+)?\s*%'
+        self.currency_patterns = {
+            'M€': 1_000_000,
+            'Md€': 1_000_000_000,
+            'k€': 1_000,
+            '€': 1
         }
     
     async def extract(self, content: str, llm_client) -> List[Dict]:
-        """Extrait les données budgétaires d'un contenu"""
-        # Appel LLM pour extraction structurée
-        budget_data = await llm_client.extract_budget_data(content)
-        
-        if not budget_data:
+        """Extrait les données budgétaires du contenu"""
+        try:
+            # Utiliser le LLM pour extraction structurée
+            budget_data = await llm_client.extract_budget_data(content)
+            
+            if not budget_data:
+                logger.warning("Aucune donnée budgétaire extraite par le LLM")
+                return []
+            
+            # Enrichir avec les phrases sources
+            enriched_data = self._attach_source_phrases(budget_data, content)
+            
+            # Normaliser les montants
+            for entry in enriched_data:
+                if 'Montant' in entry:
+                    entry['Montant'] = self._normalize_amount(str(entry['Montant']))
+            
+            return enriched_data
+            
+        except Exception as e:
+            logger.error(f"Erreur extraction budget: {str(e)}")
             return []
+    
+    def _normalize_amount(self, amount_str: str) -> float:
+        """Normalise un montant en nombre"""
+        # Nettoyer la chaîne
+        amount_str = amount_str.replace(' ', '').replace(',', '.')
         
-        # Enrichir avec les phrases sources
-        enriched_data = self._attach_source_phrases(budget_data, content)
+        # Extraire le nombre et l'unité
+        for unit, multiplier in self.currency_patterns.items():
+            if unit in amount_str:
+                number_str = amount_str.replace(unit, '').strip()
+                try:
+                    return float(number_str) * multiplier
+                except ValueError:
+                    pass
         
-        return enriched_data
+        # Essayer de parser directement
+        try:
+            return float(amount_str)
+        except ValueError:
+            return 0.0
     
     def _attach_source_phrases(self, budget_data: List[Dict], full_text: str) -> List[Dict]:
         """Attache les phrases sources aux données extraites"""
-        # Découper le texte en phrases
         sentences = self._split_into_sentences(full_text)
         
         for entry in budget_data:
-            # Chercher la phrase contenant le montant
-            montant_str = str(entry.get('Montant', ''))
+            montant = entry.get('Montant', '')
+            description = entry.get('Description', '')
+            
             best_match = None
+            best_score = 0
             
             for sentence in sentences:
-                if self._contains_amount(sentence, montant_str):
-                    # Vérifier aussi si la description est mentionnée
-                    desc_words = entry.get('Description', '').lower().split()
-                    if any(word in sentence.lower() for word in desc_words if len(word) > 3):
-                        best_match = sentence
-                        break
-                    elif not best_match:
-                        best_match = sentence
+                score = 0
+                sentence_lower = sentence.lower()
+                
+                # Vérifier la présence du montant
+                if str(montant) in sentence:
+                    score += 2
+                
+                # Vérifier la présence de mots de la description
+                desc_words = description.lower().split()
+                matching_words = sum(1 for word in desc_words 
+                                   if len(word) > 3 and word in sentence_lower)
+                score += matching_words
+                
+                if score > best_score:
+                    best_score = score
+                    best_match = sentence
             
             entry['SourcePhrase'] = best_match
         
@@ -67,40 +96,13 @@ class BudgetExtractor:
     
     def _split_into_sentences(self, text: str) -> List[str]:
         """Découpe un texte en phrases"""
-        # Ajouter un point après les lignes sans ponctuation finale
-        lines = text.split('\n')
-        processed_lines = []
+        # Remplacer les sauts de ligne par des espaces
+        text = text.replace('\n', ' ')
         
-        for line in lines:
-            line = line.strip()
-            if line and not line[-1] in '.!?':
-                line += '.'
-            processed_lines.append(line)
+        # Découper sur la ponctuation
+        sentences = re.split(r'[.!?]+', text)
         
-        text = ' '.join(processed_lines)
+        # Nettoyer et filtrer
+        sentences = [s.strip() for s in sentences if s.strip()]
         
-        # Découper en phrases
-        sentences = re.split(r'(?<=[.!?])\s+', text)
-        return [s.strip() for s in sentences if s.strip()]
-    
-    def _contains_amount(self, sentence: str, amount: str) -> bool:
-        """Vérifie si une phrase contient un montant"""
-        # Normaliser le montant (enlever espaces, convertir virgules)
-        normalized_amount = amount.replace(' ', '').replace(',', '.')
-        
-        # Chercher le montant avec différents formats
-        patterns = [
-            amount,  # Format original
-            amount.replace(' ', ''),  # Sans espaces
-            amount.replace(' ', ' '),  # Avec espaces normaux
-            normalized_amount  # Normalisé
-        ]
-        
-        sentence_lower = sentence.lower()
-        return any(p.lower() in sentence_lower for p in patterns)
-    
-    def map_to_cells(self, entries: pd.DataFrame, tags: List[Dict], llm_client) -> pd.DataFrame:
-        """Mappe les entrées budgétaires aux cellules Excel"""
-        # Implémenter la logique de mapping
-        # Cette partie nécessiterait l'intégration avec le LLM pour le mapping intelligent
-        pass
+        return sentences
