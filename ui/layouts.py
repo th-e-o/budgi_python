@@ -21,101 +21,93 @@ class MainLayout:
                on_tool_action: Callable):
         """Rend le layout complet de l'application"""
         
-        # Layout en 2 colonnes
-        chat_col, tools_col = st.columns([2, 1])
+        # Layout principal sans colonnes imbriquées
+        # Utiliser la sidebar de Streamlit pour les outils
+        with st.sidebar:
+            self._render_sidebar(on_tool_action)
         
-        # Colonne du chat
-        with chat_col:
-            self._render_chat_column(on_message_send, on_file_upload)
-        
-        # Colonne des outils
-        with tools_col:
-            self._render_tools_column(on_tool_action)
+        # Zone principale pour le chat
+        self._render_main_chat(on_message_send, on_file_upload)
     
-    def _render_chat_column(self, on_message_send: Callable, on_file_upload: Callable):
-        """Rend la colonne du chat"""
-        # Container principal
-        chat_container = st.container()
+    def _render_main_chat(self, on_message_send: Callable, on_file_upload: Callable):
+        """Rend la zone principale du chat"""
+        # Header
+        st.markdown(
+            self.chat_components.render_header(),
+            unsafe_allow_html=True
+        )
         
-        with chat_container:
-            # Header
-            st.markdown(
-                self.chat_components.render_header(),
-                unsafe_allow_html=True
-            )
-            
-            # Messages
+        # Container pour les messages
+        messages_container = st.container(height=500)
+        with messages_container:
             self._render_messages_area(on_message_send)
-            
-            # Input
-            message, file, send_clicked = self.input_components.render_chat_input()
-            
-            # Quick actions (comme dans l'app R)
-            st.markdown(
-                self.chat_components.render_quick_actions(),
-                unsafe_allow_html=True
-            )
-            
-            # Gérer les événements
-            if message and send_clicked:
-                on_message_send(message)
-            
-            if file:
-                on_file_upload(file)
+        
+        # Séparateur
+        st.markdown("---")
+        
+        # Zone d'input et actions
+        message, file, send_clicked = self.input_components.render_chat_input()
+        
+        # Quick actions
+        st.markdown(
+            self.chat_components.render_quick_actions(),
+            unsafe_allow_html=True
+        )
+        
+        # Gérer les événements
+        if message and send_clicked:
+            on_message_send(message)
+        
+        if file:
+            on_file_upload(file)
     
     def _render_messages_area(self, on_message_send: Callable):
         """Rend la zone des messages avec quick replies"""
-        messages_container = st.container()
+        st.markdown('<div class="chat-messages">', unsafe_allow_html=True)
         
-        with messages_container:
-            st.markdown('<div class="chat-messages">', unsafe_allow_html=True)
+        # Afficher tous les messages
+        for i, msg in enumerate(st.session_state.get('chat_history', [])):
+            html, needs_buttons = self.chat_components.render_message(msg, i)
+            st.markdown(html, unsafe_allow_html=True)
             
-            # Afficher tous les messages
-            for i, msg in enumerate(st.session_state.get('chat_history', [])):
-                html, needs_buttons = self.chat_components.render_message(msg, i)
-                st.markdown(html, unsafe_allow_html=True)
-                
-                # Si c'est un message bot (pas user), ajouter les quick replies
-                if msg['role'] == 'assistant' and msg.get('type') != 'bpss_prompt':
-                    # Quick replies comme dans l'app R
-                    quick_reply = self.chat_components.render_quick_replies_for_bot(i)
-                    if quick_reply:
-                        if quick_reply == "extract_budget":
-                            # Action spéciale pour l'extraction
-                            st.session_state.pending_action = {
-                                'type': 'extract_budget',
-                                'message_index': i
-                            }
-                            st.rerun()
-                        else:
-                            # Message normal
-                            on_message_send(quick_reply)
-                
-                # Si c'est un message BPSS prompt
-                elif needs_buttons:
-                    col1, col2 = st.columns(2)
-                    with col1:
-                        if st.button("🛠️ Lancer l'outil Excel BPSS", 
-                                   key=f"bpss_yes_{i}",
-                                   type="primary"):
-                            st.session_state.show_bpss_tool = True
-                            st.rerun()
-                    with col2:
-                        if st.button("Non merci", key=f"bpss_no_{i}"):
-                            on_message_send("Non merci, continue")
+            # Quick replies pour les messages bot
+            if msg['role'] == 'assistant' and msg.get('type') != 'bpss_prompt':
+                quick_reply = self.chat_components.render_quick_replies_for_bot(i)
+                if quick_reply:
+                    if quick_reply == "extract_budget":
+                        st.session_state.pending_action = {
+                            'type': 'extract_budget',
+                            'message_index': i
+                        }
+                        st.rerun()
+                    else:
+                        on_message_send(quick_reply)
             
-            # Indicateur de frappe
-            if st.session_state.get('is_typing', False):
-                st.markdown(
-                    self.chat_components.render_typing_indicator(),
-                    unsafe_allow_html=True
-                )
-            
-            st.markdown('</div>', unsafe_allow_html=True)
+            # Message BPSS prompt
+            elif needs_buttons:
+                col1, col2 = st.columns(2)
+                with col1:
+                    if st.button("🛠️ Lancer l'outil Excel BPSS", 
+                               key=f"bpss_yes_{i}",
+                               type="primary"):
+                        st.session_state.show_bpss_tool = True
+                        st.rerun()
+                with col2:
+                    if st.button("Non merci", key=f"bpss_no_{i}"):
+                        on_message_send("Non merci, continue")
+        
+        # Indicateur de frappe
+        if st.session_state.get('is_typing', False):
+            st.markdown(
+                self.chat_components.render_typing_indicator(),
+                unsafe_allow_html=True
+            )
+        
+        st.markdown('</div>', unsafe_allow_html=True)
     
-    def _render_tools_column(self, on_tool_action: Callable):
-        """Rend la colonne des outils"""
-        st.markdown("### 🛠️ Outils Budgétaires")
+    def _render_sidebar(self, on_tool_action: Callable):
+        """Rend la sidebar avec les outils"""
+        st.markdown("# 🛠️ Outils Budgétaires")
         
         # Vérifier si l'outil BPSS doit être ouvert
         bpss_expanded = st.session_state.get('show_bpss_tool', False)
@@ -141,7 +133,7 @@ class MainLayout:
                 self.sidebar_components.render_excel_module(self.services),
                 on_tool_action
             ),
-            expanded=True  # Ouvert par défaut comme dans l'app R
+            expanded=True
         )
         
         # JSON Helper
@@ -164,7 +156,7 @@ class MainLayout:
         if history_action:
             on_tool_action(history_action)
         
-        # Réinitialiser le flag BPSS après affichage
+        # Réinitialiser le flag BPSS
         if bpss_expanded:
             st.session_state.show_bpss_tool = False
     

@@ -5,6 +5,20 @@ def get_main_styles() -> str:
     """Retourne les styles CSS principaux de l'application"""
     return """
     <style>
+        /* Ajustements pour la sidebar */
+        section[data-testid="stSidebar"] {
+            background-color: #f8f9fa;
+            padding-top: 0;
+        }
+        
+        section[data-testid="stSidebar"] .block-container {
+            padding-top: 1rem;
+        }
+        /* Container principal adapté */
+        .main > div {
+            padding-top: 0;
+            padding-bottom: 0;
+        }
         /* Variables CSS */
         :root {
             --primary-color: #0055A4;
@@ -30,7 +44,11 @@ def get_main_styles() -> str:
         }
         
         /* Header du chat */
+        /* Chat header fixe */
         .chat-header {
+            position: sticky;
+            top: 0;
+            z-index: 100;
             background: linear-gradient(135deg, var(--primary-color) 0%, #003d7a 100%);
             color: white;
             padding: 1.5rem;
@@ -38,8 +56,36 @@ def get_main_styles() -> str:
             align-items: center;
             gap: 1rem;
             box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+            margin: -1rem -1rem 1rem -1rem;
+            border-radius: 0;
+        }
+        /* Container des messages avec hauteur fixe */
+        div[data-testid="stVerticalBlock"] > div:has(.chat-messages) {
+            height: 500px;
+            overflow-y: auto;
+            background: var(--chat-bg);
+            border-radius: 8px;
+            padding: 1rem;
         }
         
+        /* Zone d'input fixe en bas */
+        .chat-input-container {
+            position: sticky;
+            bottom: 0;
+            background: white;
+            padding: 1rem;
+            border-top: 1px solid #E0E0E0;
+            margin: 0 -1rem -1rem -1rem;
+        }
+        
+        /* Ajuster les marges du chat pour la sidebar */
+        @media (min-width: 768px) {
+            .main .block-container {
+                max-width: none;
+                padding-left: 2rem;
+                padding-right: 2rem;
+            }
+        }
         .bot-avatar {
             width: 50px;
             height: 50px;
