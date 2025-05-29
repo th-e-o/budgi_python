@@ -1,10 +1,16 @@
-# app.py - Version corrigée
+# app.py - Version corrigée avec tous les bugs fixés
 import streamlit as st
 import asyncio
 from pathlib import Path
 from datetime import datetime
 import logging
 import openpyxl
+import tempfile
+import contextlib
+import os
+import pandas as pd
+from modules.excel_parser.parser_v3 import ExcelFormulaParser, ParserConfig
+from modules.budget_mapper import BudgetMapper
 
 # Configuration de la page
 st.set_page_config(
@@ -35,6 +41,24 @@ logger = logging.getLogger(__name__)
 st.markdown(get_main_styles(), unsafe_allow_html=True)
 st.markdown(get_javascript(), unsafe_allow_html=True)
 
+# Context manager pour fichiers temporaires
+@contextlib.contextmanager
+def temporary_file(content, suffix=''):
+    """Context manager pour fichiers temporaires"""
+    fd, path = tempfile.mkstemp(suffix=suffix)
+    try:
+        with os.fdopen(fd, 'wb') as f:
+            if isinstance(content, bytes):
+                f.write(content)
+            else:
+                f.write(content.encode() if hasattr(content, 'encode') else bytes(content))
+        yield path
+    finally:
+        try:
+            os.unlink(path)
+        except:
+            pass
+
 # Initialisation des services
 @st.cache_resource
 def init_services():
@@ -64,13 +88,26 @@ def init_session_state():
         'json_data': None,
         'parsed_formulas': None,
         'excel_script': None,
-        'message_input_key': 0,  # Clé pour forcer le rafraîchissement
-        'scroll_to_bottom': False
+        'message_input_key': 0,
+        'scroll_to_bottom': False,
+        'processed_files': set(),  # Pour éviter les doublons
+        'temp_files': []  # Pour nettoyer les fichiers temporaires
     }
     
     for key, default_value in defaults.items():
         if key not in st.session_state:
             st.session_state[key] = default_value
+
+# Nettoyage des fichiers temporaires
+def cleanup_temp_files():
+    """Nettoie les fichiers temporaires"""
+    for temp_file in st.session_state.get('temp_files', []):
+        try:
+            if os.path.exists(temp_file):
+                os.unlink(temp_file)
+        except:
+            pass
+    st.session_state.temp_files = []
 
 # Gestionnaires d'événements
 async def handle_message_send(message: str):
@@ -92,7 +129,6 @@ async def handle_message_send(message: str):
     st.session_state.scroll_to_bottom = True
     
     st.rerun()
-
 
 async def process_message():
     """Traite le message de manière asynchrone"""
@@ -125,182 +161,82 @@ async def process_message():
     st.session_state.is_typing = False
     st.rerun()
 
-def inject_scroll_script():
-    """Injecte le script pour scroll automatique"""
-    # Créer un placeholder en bas de page qui force le scroll
-    scroll_anchor = st.empty()
-    
-    if st.session_state.get('scroll_to_bottom', False):
-        # Méthode 1: Utiliser JavaScript
-        st.markdown("""
-        <script>
-        // Fonction de scroll améliorée
-        function scrollChatToBottom() {
-            // Chercher le container avec overflow
-            const containers = document.querySelectorAll('[data-testid="stVerticalBlock"]');
-            
-            containers.forEach(container => {
-                // Vérifier si c'est le bon container (celui avec hauteur fixe)
-                const style = window.getComputedStyle(container);
-                if (style.height === '500px' || container.style.height === '500px') {
-                    container.scrollTop = container.scrollHeight;
-                    console.log('Scrolled container:', container);
-                }
-            });
-            
-            // Alternative: chercher par classe
-            const chatContainers = document.querySelectorAll('.stContainer > div');
-            chatContainers.forEach(container => {
-                if (container.scrollHeight > container.clientHeight) {
-                    container.scrollTop = container.scrollHeight;
-                }
-            });
-        }
-        
-        // Exécuter immédiatement et après un délai
-        scrollChatToBottom();
-        setTimeout(scrollChatToBottom, 200);
-        setTimeout(scrollChatToBottom, 500);
-        </script>
-        """, unsafe_allow_html=True)
-        
-        # Méthode 2: Anchor invisible en bas
-        with scroll_anchor:
-            st.markdown('<div id="bottom-anchor" style="height: 1px;"></div>', unsafe_allow_html=True)
-            st.markdown("""
-            <script>
-            document.getElementById('bottom-anchor')?.scrollIntoView({ behavior: 'smooth' });
-            </script>
-            """, unsafe_allow_html=True)
-        
-        st.session_state.scroll_to_bottom = False
-
-def get_enhanced_styles():
-    """Styles CSS améliorés pour le scroll"""
-    return """
-    <style>
-        /* Forcer le scroll-behavior smooth sur les containers */
-        [data-testid="stVerticalBlock"] {
-            scroll-behavior: smooth !important;
-        }
-        
-        /* Container des messages avec scroll amélioré */
-        .chat-messages {
-            scroll-behavior: smooth;
-            overflow-y: auto;
-            overflow-x: hidden;
-        }
-        
-        /* Fix pour le container height */
-        div[style*="height: 500px"] {
-            overflow-y: auto !important;
-            scroll-behavior: smooth !important;
-        }
-        
-        /* Animation pour nouveaux messages */
-        .message-wrapper {
-            animation: slideIn 0.3s ease-out;
-        }
-        
-        @keyframes slideIn {
-            from {
-                opacity: 0;
-                transform: translateY(20px);
-            }
-            to {
-                opacity: 1;
-                transform: translateY(0);
-            }
-        }
-        
-        /* S'assurer que le container prend toute la hauteur */
-        .main .block-container {
-            height: 100%;
-            display: flex;
-            flex-direction: column;
-        }
-    </style>
-    """
-
-
 async def handle_file_upload(uploaded_file):
     """Gère l'upload d'un fichier - VERSION CORRIGÉE"""
-    # CORRECTION: Vérifier si c'est un nouveau fichier
-    if 'last_uploaded_file' in st.session_state and \
-       st.session_state.last_uploaded_file == uploaded_file.name:
+    # Créer une clé unique pour le fichier
+    file_key = f"{uploaded_file.name}_{uploaded_file.size}"
+    
+    if file_key in st.session_state.processed_files:
         return  # Fichier déjà traité
+    
+    st.session_state.processed_files.add(file_key)
     
     # Notifier l'upload
     st.session_state.chat_history.append({
         'role': 'user',
         'content': f"📎 Fichier envoyé : {uploaded_file.name}",
         'timestamp': datetime.now().strftime("%H:%M"),
-        'file_name': uploaded_file.name
+        'file_name': uploaded_file.name,
+        'file_key': file_key
     })
     
     st.session_state.is_typing = True
     st.session_state.scroll_to_bottom = True
-    st.session_state.last_uploaded_file = uploaded_file.name  # AJOUT: Marquer comme traité
     st.rerun()
 
 async def process_file(uploaded_file):
     """Traite le fichier de manière asynchrone - VERSION CORRIGÉE"""
     try:
-        # Créer un fichier temporaire
-        temp_dir = Path("/tmp")
-        temp_dir.mkdir(exist_ok=True)  # AJOUT: Créer le dossier si nécessaire
-        temp_path = temp_dir / uploaded_file.name
+        # Utiliser le context manager pour fichier temporaire
+        file_content = uploaded_file.getbuffer()
+        suffix = Path(uploaded_file.name).suffix
         
-        with open(temp_path, "wb") as f:
-            f.write(uploaded_file.getbuffer())
-        
-        content = services['file_handler'].read_file(str(temp_path), uploaded_file.name)
-        
-        # IMPORTANT: Stocker le contenu complet du fichier
-        st.session_state.current_file = {
-            'name': uploaded_file.name,
-            'content': content,
-            'path': str(temp_path),
-            'type': uploaded_file.name.split('.')[-1].lower()
-        }
-
-        # Ajouter aussi dans l'historique pour l'extraction
-        st.session_state.chat_history.append({
-            'role': 'system',
-            'content': content,
-            'meta': 'file_content',
-            'file_name': uploaded_file.name,
-            'timestamp': datetime.now().strftime("%H:%M")
-        })
-        
-        # Si c'est un Excel, le charger
-        if uploaded_file.name.endswith('.xlsx'):
-            st.session_state.excel_workbook = services['excel_handler'].load_workbook_from_bytes(
-                uploaded_file.getbuffer()
-            )
-        
-        # Si c'est un JSON, le charger
-        if uploaded_file.name.endswith('.json'):
-            import json
-            st.session_state.json_data = json.loads(content)
-        
-        # Obtenir un résumé
-        summary_prompt = [
-            {'role': 'user', 'content': content[:2000]},
-            {'role': 'system', 'content': "Résume ce fichier en 2-3 lignes et demande ce que l'utilisateur souhaite en faire."}
-        ]
-        
-        response = await services['llm_client'].chat(summary_prompt)
-        
-        if response:
+        with temporary_file(file_content, suffix=suffix) as temp_path:
+            # Lire le contenu
+            content = services['file_handler'].read_file(temp_path, uploaded_file.name)
+            
+            # Stocker le contenu
+            st.session_state.current_file = {
+                'name': uploaded_file.name,
+                'content': content,
+                'path': temp_path,
+                'type': uploaded_file.name.split('.')[-1].lower(),
+                'raw_bytes': file_content
+            }
+            
+            # Ajouter dans l'historique
             st.session_state.chat_history.append({
-                'role': 'assistant',
-                'content': response,
+                'role': 'system',
+                'content': content,
+                'meta': 'file_content',
+                'file_name': uploaded_file.name,
                 'timestamp': datetime.now().strftime("%H:%M")
             })
-        
-        # Nettoyer
-        temp_path.unlink(missing_ok=True)
+            
+            # Traitement spécifique selon le type
+            if uploaded_file.name.endswith('.xlsx'):
+                st.session_state.excel_workbook = services['excel_handler'].load_workbook_from_bytes(
+                    file_content
+                )
+            
+            elif uploaded_file.name.endswith('.json'):
+                import json
+                st.session_state.json_data = json.loads(content)
+            
+            # Obtenir un résumé
+            summary_prompt = [
+                {'role': 'user', 'content': content[:2000]},
+                {'role': 'system', 'content': "Résume ce fichier en 2-3 lignes et demande ce que l'utilisateur souhaite en faire."}
+            ]
+            
+            response = await services['llm_client'].chat(summary_prompt)
+            
+            if response:
+                st.session_state.chat_history.append({
+                    'role': 'assistant',
+                    'content': response,
+                    'timestamp': datetime.now().strftime("%H:%M")
+                })
         
     except Exception as e:
         logger.error(f"Erreur lors de l'upload du fichier: {str(e)}")
@@ -310,13 +246,15 @@ async def process_file(uploaded_file):
         st.session_state.scroll_to_bottom = True
     
     st.rerun()
-    
+
 def handle_tool_action(action: dict):
     """Gère les actions des outils"""
     action_type = action.get('action')
     
     if action_type == 'clear_history':
         st.session_state.chat_history = []
+        st.session_state.processed_files = set()
+        cleanup_temp_files()
         st.success("Historique effacé")
         st.rerun()
     
@@ -343,88 +281,94 @@ def handle_tool_action(action: dict):
 async def process_bpss(data: dict):
     """Traite les fichiers BPSS"""
     with st.spinner("Traitement BPSS en cours..."):
+        temp_files = []
         try:
             # Sauvegarder temporairement les fichiers
-            temp_files = {}
+            temp_paths = {}
             for key, file in data['files'].items():
-                temp_path = Path(f"/tmp/{file.name}")
-                with open(temp_path, "wb") as f:
-                    f.write(file.getbuffer())
-                temp_files[key] = str(temp_path)
-            
-            # Traiter avec l'outil BPSS
-            result_wb = services['bpss_tool'].process_files(
-                ppes_path=temp_files['ppes'],
-                dpp18_path=temp_files['dpp18'],
-                bud45_path=temp_files['bud45'],
-                year=data['year'],
-                ministry_code=data['ministry'],
-                program_code=data['program'],
-                target_workbook=st.session_state.excel_workbook or openpyxl.Workbook()
-            )
+                with temporary_file(file.getbuffer(), suffix='.xlsx') as temp_path:
+                    temp_paths[key] = temp_path
+                    
+                    # Traiter avec l'outil BPSS
+                    result_wb = services['bpss_tool'].process_files(
+                        ppes_path=temp_paths.get('ppes'),
+                        dpp18_path=temp_paths.get('dpp18'),
+                        bud45_path=temp_paths.get('bud45'),
+                        year=data['year'],
+                        ministry_code=data['ministry'],
+                        program_code=data['program'],
+                        target_workbook=st.session_state.excel_workbook or openpyxl.Workbook()
+                    )
             
             st.session_state.excel_workbook = result_wb
             st.success("✅ Traitement BPSS terminé!")
-            
-            # Nettoyer les fichiers temporaires
-            for path in temp_files.values():
-                Path(path).unlink(missing_ok=True)
                 
         except Exception as e:
             st.error(f"Erreur BPSS: {str(e)}")
 
 async def extract_budget_data():
     """Extrait les données budgétaires - VERSION CORRIGÉE"""
-    # CORRECTION: Meilleure gestion de la récupération du contenu
     content = None
+    file_name = None
     
-    # D'abord vérifier current_file
+    # Méthode 1: current_file
     if st.session_state.get('current_file') and st.session_state.current_file.get('content'):
         content = st.session_state.current_file['content']
-        logger.info("Contenu trouvé dans current_file")
-    else:
-        # Sinon, chercher dans l'historique
+        file_name = st.session_state.current_file.get('name', 'fichier')
+        logger.info(f"Contenu trouvé dans current_file: {len(content)} caractères")
+    
+    # Méthode 2: Chercher dans l'historique
+    if not content:
         for msg in reversed(st.session_state.chat_history):
             if msg.get('meta') == 'file_content':
                 content = msg['content']
-                logger.info("Contenu trouvé dans l'historique")
+                file_name = msg.get('file_name', 'fichier')
+                logger.info(f"Contenu trouvé dans l'historique: {len(content)} caractères")
+                break
+    
+    # Méthode 3: Dernier message utilisateur
+    if not content:
+        for msg in reversed(st.session_state.chat_history):
+            if msg.get('role') == 'user' and not msg['content'].startswith('📎'):
+                content = msg['content']
+                file_name = "message"
+                logger.info(f"Utilisation du dernier message: {len(content)} caractères")
                 break
     
     if not content:
-        st.error("Aucun fichier chargé pour l'extraction. Veuillez d'abord envoyer un fichier.")
+        st.error("Aucun fichier ou texte chargé pour l'extraction. Veuillez d'abord envoyer un fichier ou un message contenant des données budgétaires.")
         return
     
     with st.spinner("Extraction en cours..."):
         try:
-            # AJOUT: Limiter la taille du contenu envoyé
+            # Limiter la taille
             max_content_length = 10000
+            content_to_process = content
             if len(content) > max_content_length:
                 logger.warning(f"Contenu tronqué de {len(content)} à {max_content_length} caractères")
-                content = content[:max_content_length] + "\n\n[... contenu tronqué ...]"
+                content_to_process = content[:max_content_length] + "\n\n[... contenu tronqué ...]"
             
             data = await services['budget_extractor'].extract(
-                content,
+                content_to_process,
                 services['llm_client']
             )
             
             if data:
                 st.session_state.extracted_data = data
-                st.success(f"✅ {len(data)} entrées budgétaires extraites!")
+                st.success(f"✅ {len(data)} entrées budgétaires extraites de '{file_name}'!")
                 
-                # Afficher les données dans un modal
+                # Afficher les données
                 show_budget_data_modal(data)
             else:
-                st.warning("Aucune donnée budgétaire trouvée dans le fichier.")
+                st.warning("Aucune donnée budgétaire trouvée dans le contenu.")
                 
         except Exception as e:
             logger.error(f"Erreur extraction: {str(e)}")
             st.error(f"Erreur lors de l'extraction: {str(e)}")
 
-
 def show_budget_data_modal(data):
     """Affiche les données budgétaires extraites"""
     with st.expander("📊 Données budgétaires extraites", expanded=True):
-        import pandas as pd
         df = pd.DataFrame(data)
         
         # Édition des données
@@ -444,7 +388,7 @@ def show_budget_data_modal(data):
         with col2:
             if st.button("🎯 Mapper les cellules"):
                 if st.session_state.json_data:
-                    map_budget_to_cells()
+                    asyncio.run(map_budget_to_cells())
                 else:
                     st.warning("Chargez d'abord un fichier JSON de configuration")
         
@@ -454,50 +398,95 @@ def show_budget_data_modal(data):
                 st.download_button(
                     label="Télécharger CSV",
                     data=csv,
-                    file_name="budget_data.csv",
+                    file_name=f"budget_data_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
                     mime="text/csv"
                 )
 
-def map_budget_to_cells():
-    """Mappe les données budgétaires aux cellules Excel"""
+async def map_budget_to_cells():
+    """Mappe les données budgétaires aux cellules Excel - IMPLÉMENTATION COMPLÈTE"""
     if not st.session_state.extracted_data or not st.session_state.json_data:
         st.error("Données manquantes pour le mapping")
         return
     
-    # Utiliser le JSON helper pour mapper
-    tags = services['json_helper'].get_tags_for_mapping(st.session_state.json_data)
-    
-    # TODO: Implémenter la logique de mapping
-    st.info("Mapping en cours de développement...")
+    with st.spinner("Mapping en cours..."):
+        try:
+            mapper = BudgetMapper(services['llm_client'])
+            tags = services['json_helper'].get_tags_for_mapping(st.session_state.json_data)
+            
+            # Convertir en DataFrame si nécessaire
+            if isinstance(st.session_state.extracted_data, list):
+                entries_df = pd.DataFrame(st.session_state.extracted_data)
+            else:
+                entries_df = st.session_state.extracted_data
+            
+            # Mapper
+            mapping = await mapper.map_entries_to_cells(
+                st.session_state.extracted_data,
+                tags
+            )
+            
+            if mapping:
+                st.info(f"📍 {len(mapping)} mappings trouvés")
+                
+                # Afficher le mapping
+                with st.expander("🗺️ Aperçu du mapping", expanded=True):
+                    mapping_df = pd.DataFrame(mapping)
+                    st.dataframe(mapping_df, use_container_width=True)
+                
+                # Appliquer au workbook si disponible
+                if st.session_state.excel_workbook:
+                    success, errors = mapper.apply_mapping_to_excel(
+                        st.session_state.excel_workbook,
+                        mapping,
+                        entries_df
+                    )
+                    
+                    if success > 0:
+                        st.success(f"✅ {success} cellules mises à jour dans Excel")
+                    if errors:
+                        with st.expander("❌ Erreurs", expanded=False):
+                            for error in errors:
+                                st.error(error)
+                else:
+                    st.warning("Aucun fichier Excel chargé pour appliquer le mapping")
+                    
+        except Exception as e:
+            logger.error(f"Erreur mapping: {str(e)}")
+            st.error(f"Erreur lors du mapping: {str(e)}")
 
 def parse_excel_formulas():
     """Parse les formules Excel"""
-    if not st.session_state.excel_workbook:
+    if not st.session_state.excel_workbook or not st.session_state.current_file:
         st.error("Aucun fichier Excel chargé")
         return
     
     with st.spinner("Analyse des formules en cours..."):
         try:
-            from modules.excel_parser.parser_v3 import ExcelFormulaParser
-            
-            parser = ExcelFormulaParser()
-            result = parser.parse_excel_file(
-                st.session_state.current_file['path'],
-                emit_script=True
-            )
-            
-            st.session_state.parsed_formulas = result
-            st.session_state.excel_script = result.get('script_file')
-            
-            stats = result['statistics']
-            st.success(f"✅ Parsing terminé: {stats['success']}/{stats['total']} formules converties ({stats['success_rate']}%)")
+            # Sauver temporairement le fichier
+            with temporary_file(st.session_state.current_file.get('raw_bytes', b''), suffix='.xlsx') as temp_path:
+                parser = ExcelFormulaParser()
+                result = parser.parse_excel_file(temp_path, emit_script=True)
+                
+                st.session_state.parsed_formulas = result
+                st.session_state.excel_script = result.get('script_file')
+                
+                stats = result['statistics']
+                st.success(f"✅ Parsing terminé: {stats['success']}/{stats['total']} formules converties ({stats['success_rate']}%)")
+                
+                # Afficher les formules
+                if result['formulas']:
+                    with st.expander("📝 Formules converties", expanded=False):
+                        for formula in result['formulas'][:10]:  # Limiter à 10
+                            if formula.r_code and not formula.r_code.startswith('#'):
+                                st.code(f"{formula.sheet}!{formula.address}: {formula.formula}\n→ {formula.r_code}", language='python')
             
         except Exception as e:
+            logger.error(f"Erreur parsing: {str(e)}")
             st.error(f"Erreur parsing: {str(e)}")
 
 def apply_excel_formulas():
     """Applique les formules Excel parsées"""
-    if not st.session_state.excel_script:
+    if not st.session_state.parsed_formulas:
         st.warning("Parsez d'abord les formules Excel")
         return
     
@@ -523,12 +512,40 @@ def export_excel():
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
     )
 
+def inject_scroll_script():
+    """Injecte le script pour scroll automatique"""
+    if st.session_state.get('scroll_to_bottom', False):
+        st.markdown("""
+        <script>
+        // Scroll amélioré
+        function scrollToBottom() {
+            const containers = document.querySelectorAll('[data-testid="stVerticalBlock"] > div');
+            containers.forEach(container => {
+                if (container.style.height === '500px' || 
+                    window.getComputedStyle(container).height === '500px') {
+                    container.scrollTop = container.scrollHeight;
+                }
+            });
+        }
+        scrollToBottom();
+        setTimeout(scrollToBottom, 100);
+        setTimeout(scrollToBottom, 300);
+        </script>
+        """, unsafe_allow_html=True)
+        
+        st.session_state.scroll_to_bottom = False
+
 def main():
     """Fonction principale - VERSION CORRIGÉE"""
     # Initialiser l'état
     init_session_state()
     
-    # CORRECTION: Gérer les messages en attente de manière plus robuste
+    # Nettoyer au démarrage
+    if 'startup_cleanup' not in st.session_state:
+        cleanup_temp_files()
+        st.session_state.startup_cleanup = True
+    
+    # Gérer les messages en attente
     if st.session_state.is_typing and len(st.session_state.chat_history) > 0:
         last_msg = st.session_state.chat_history[-1]
         if last_msg['role'] == 'user' and not last_msg['content'].startswith("📎"):
@@ -536,12 +553,16 @@ def main():
             asyncio.run(process_message())
         elif last_msg['role'] == 'user' and last_msg['content'].startswith("📎"):
             # Fichier à traiter
-            # Chercher le fichier dans les widgets file_uploader
-            for key in ['file_upload', 'file_upload_chat']:
-                file_to_process = st.session_state.get(key)
-                if file_to_process and file_to_process.name == last_msg.get('file_name'):
-                    asyncio.run(process_file(file_to_process))
-                    break
+            file_key = last_msg.get('file_key')
+            if file_key:
+                # Chercher le fichier
+                for key in ['file_upload', 'file_upload_chat']:
+                    file_to_process = st.session_state.get(key)
+                    if file_to_process:
+                        current_file_key = f"{file_to_process.name}_{file_to_process.size}"
+                        if current_file_key == file_key:
+                            asyncio.run(process_file(file_to_process))
+                            break
     
     # Gérer les actions en attente
     if st.session_state.get('pending_action'):

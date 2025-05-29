@@ -14,11 +14,13 @@ def get_main_styles() -> str:
         section[data-testid="stSidebar"] .block-container {
             padding-top: 1rem;
         }
+        
         /* Container principal adapté */
         .main > div {
             padding-top: 0;
             padding-bottom: 0;
         }
+        
         /* Variables CSS */
         :root {
             --primary-color: #0055A4;
@@ -44,7 +46,6 @@ def get_main_styles() -> str:
         }
         
         /* Header du chat */
-        /* Chat header fixe */
         .chat-header {
             position: sticky;
             top: 0;
@@ -59,13 +60,34 @@ def get_main_styles() -> str:
             margin: -1rem -1rem 1rem -1rem;
             border-radius: 0;
         }
-        /* Container des messages avec hauteur fixe */
-        div[data-testid="stVerticalBlock"] > div:has(.chat-messages) {
-            height: 500px;
-            overflow-y: auto;
+        
+        /* Container des messages avec scroll amélioré */
+        div[data-testid="stVerticalBlock"] > div[style*="height: 500px"] {
+            overflow-y: auto !important;
+            overflow-x: hidden !important;
+            scroll-behavior: smooth !important;
             background: var(--chat-bg);
             border-radius: 8px;
             padding: 1rem;
+        }
+        
+        /* Forcer le scroll visible */
+        div[style*="height: 500px"]::-webkit-scrollbar {
+            width: 8px;
+        }
+        
+        div[style*="height: 500px"]::-webkit-scrollbar-track {
+            background: #f1f1f1;
+            border-radius: 4px;
+        }
+        
+        div[style*="height: 500px"]::-webkit-scrollbar-thumb {
+            background: #888;
+            border-radius: 4px;
+        }
+        
+        div[style*="height: 500px"]::-webkit-scrollbar-thumb:hover {
+            background: #555;
         }
         
         /* Zone d'input fixe en bas */
@@ -86,6 +108,7 @@ def get_main_styles() -> str:
                 padding-right: 2rem;
             }
         }
+        
         .bot-avatar {
             width: 50px;
             height: 50px;
@@ -360,6 +383,13 @@ def get_main_styles() -> str:
         #MainMenu {visibility: hidden;}
         footer {visibility: hidden;}
         header {visibility: hidden;}
+        
+        /* Amélioration pour le logo dans le header */
+        .bot-avatar img {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+        }
     </style>
     """
 
@@ -367,76 +397,39 @@ def get_javascript() -> str:
     """Retourne le JavaScript nécessaire pour l'application"""
     return """
     <script>
-        // Auto-scroll to bottom
+        // Auto-scroll to bottom amélioré
         function scrollToBottom() {
-            // Chercher tous les containers possibles
-            const messagesContainers = document.querySelectorAll('.chat-messages, [data-testid="stVerticalBlock"] > div:has(.message-wrapper)');
-            messagesContainers.forEach(container => {
-                if (container.scrollHeight > container.clientHeight) {
+            // Méthode 1: Chercher les containers avec hauteur fixe
+            const containers = document.querySelectorAll('[data-testid="stVerticalBlock"] > div');
+            containers.forEach(container => {
+                if (container.style.height === '500px' || 
+                    window.getComputedStyle(container).height === '500px') {
                     container.scrollTop = container.scrollHeight;
+                    console.log('Scrolled container to bottom');
                 }
             });
             
-            // Chercher spécifiquement les containers avec hauteur fixe
-            const fixedHeightContainers = document.querySelectorAll('div[style*="height: 500px"], div[style*="overflow-y: auto"]');
-            fixedHeightContainers.forEach(container => {
-                if (container.querySelector('.message-wrapper, .chat-messages')) {
-                    container.scrollTop = container.scrollHeight;
-                }
-            });
-        }
-        
-        // Fonction pour effacer le champ de saisie
-        function clearMessageInput() {
-            const textarea = document.querySelector('textarea[aria-label="Message"]');
-            if (textarea) {
-                textarea.value = '';
-                // Déclencher l'événement pour que Streamlit mette à jour
-                const event = new Event('input', { bubbles: true });
-                textarea.dispatchEvent(event);
+            // Méthode 2: Chercher l'ancre spécifique
+            const anchor = document.getElementById('chat-bottom-anchor');
+            if (anchor) {
+                anchor.scrollIntoView({ behavior: 'smooth', block: 'end' });
             }
         }
         
-        // Gérer la touche Enter
-        function setupEnterKeyHandler() {
-            const textarea = document.querySelector('textarea[aria-label="Message"]');
-            if (textarea && !textarea.hasAttribute('data-enter-handler')) {
-                textarea.setAttribute('data-enter-handler', 'true');
-                
-                textarea.addEventListener('keydown', function(e) {
-                    if (e.key === 'Enter' && !e.shiftKey) {
-                        e.preventDefault();
-                        
-                        // Trouver et cliquer sur le bouton d'envoi
-                        const sendButton = document.querySelector('button[kind="primary"]');
-                        if (!sendButton) {
-                            // Chercher par d'autres moyens
-                            const buttons = document.querySelectorAll('button');
-                            for (let btn of buttons) {
-                                if (btn.textContent.includes('➤') || btn.getAttribute('aria-label')?.includes('send')) {
-                                    btn.click();
-                                    break;
-                                }
-                            }
-                        } else {
-                            sendButton.click();
-                        }
-                    }
-                });
-            }
-        }
-        
-        // Observer pour nouveaux messages et réinitialiser les handlers
-        function setupObserver() {
+        // Observer pour les changements dans le chat
+        function setupChatObserver() {
             const observer = new MutationObserver((mutations) => {
-                // Scroll automatique si nouveau message
                 let shouldScroll = false;
+                
                 mutations.forEach(mutation => {
                     if (mutation.addedNodes.length > 0) {
                         mutation.addedNodes.forEach(node => {
-                            if (node.classList && (node.classList.contains('message-wrapper') || 
-                                node.querySelector && node.querySelector('.message-wrapper'))) {
-                                shouldScroll = true;
+                            if (node.nodeType === 1) {
+                                // Vérifier si c'est un message
+                                if (node.classList?.contains('message-wrapper') || 
+                                    node.querySelector?.('.message-wrapper')) {
+                                    shouldScroll = true;
+                                }
                             }
                         });
                     }
@@ -444,45 +437,44 @@ def get_javascript() -> str:
                 
                 if (shouldScroll) {
                     setTimeout(scrollToBottom, 100);
+                    setTimeout(scrollToBottom, 300); // Double check
                 }
-                
-                // Réinitialiser le handler Enter au cas où le textarea est recréé
-                setupEnterKeyHandler();
             });
             
-            // Observer le body entier pour capturer tous les changements
-            observer.observe(document.body, { 
-                childList: true, 
-                subtree: true,
-                attributes: false,
-                characterData: false
-            });
-        }
-        
-        // Quick action handlers
-        function setQuickAction(text) {
-            const textarea = document.querySelector('textarea[aria-label="Message"]');
-            if (textarea) {
-                textarea.value = text;
-                const event = new Event('input', { bubbles: true });
-                textarea.dispatchEvent(event);
-                textarea.focus();
-            }
+            // Observer tous les containers possibles
+            setTimeout(() => {
+                const containers = document.querySelectorAll('[data-testid="stVerticalBlock"] > div');
+                containers.forEach(container => {
+                    if (container.style.height === '500px') {
+                        observer.observe(container, {
+                            childList: true,
+                            subtree: true
+                        });
+                        console.log('Chat observer setup complete');
+                    }
+                });
+            }, 1000);
         }
         
         // Initialisation
         document.addEventListener('DOMContentLoaded', function() {
-            setupEnterKeyHandler();
-            setupObserver();
-            scrollToBottom();
+            setupChatObserver();
+            setTimeout(scrollToBottom, 500);
         });
         
-        // Réinitialiser périodiquement (pour gérer les updates Streamlit)
+        // Scroll périodique pour s'assurer
         setInterval(function() {
-            setupEnterKeyHandler();
-        }, 1000);
-        
-        // Scroll initial après un court délai
-        setTimeout(scrollToBottom, 500);
+            // Vérifier s'il y a de nouveaux messages
+            const containers = document.querySelectorAll('[data-testid="stVerticalBlock"] > div');
+            containers.forEach(container => {
+                if (container.style.height === '500px') {
+                    const isAtBottom = container.scrollHeight - container.scrollTop - container.clientHeight < 100;
+                    if (!isAtBottom && container.querySelector('.typing-indicator')) {
+                        // Si on n'est pas en bas et qu'il y a un indicateur de frappe
+                        scrollToBottom();
+                    }
+                }
+            });
+        }, 2000);
     </script>
     """

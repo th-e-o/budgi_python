@@ -1,8 +1,8 @@
-# ui/components/sidebar.py
+# ui/components/sidebar.py - Version corrigée sans expanders imbriqués
 import streamlit as st
 from typing import Callable, Dict, Any
-from datetime import datetime  # Import manquant
-import openpyxl  # Import manquant pour BPSS
+from datetime import datetime
+import openpyxl
 
 class SidebarComponents:
     """Composants pour la sidebar avec les outils"""
@@ -12,9 +12,7 @@ class SidebarComponents:
                           render_content: Callable, expanded: bool = False):
         """Rend une section d'outil dans la sidebar"""
         with st.expander(f"{icon} {title}", expanded=expanded):
-            st.markdown('<div class="tool-card">', unsafe_allow_html=True)
             render_content()
-            st.markdown('</div>', unsafe_allow_html=True)
     
     @staticmethod
     def render_bpss_tool(services: Dict[str, Any]):
@@ -73,7 +71,8 @@ class SidebarComponents:
                     st.session_state.current_file = {
                         'name': uploaded.name,
                         'content': uploaded.getbuffer(),
-                        'path': None
+                        'path': None,
+                        'raw_bytes': uploaded.getbuffer()
                     }
                 except Exception as e:
                     st.error(f"Erreur chargement Excel: {str(e)}")
@@ -111,8 +110,13 @@ class SidebarComponents:
                     if st.button("💾 Exporter", use_container_width=True, key="export_excel"):
                         return {'action': 'export_excel', 'sheet': selected}
                 
-                # Aperçu des données
-                with st.expander("👁️ Aperçu des données", expanded=False):
+                # Aperçu des données - PAS dans un expander pour éviter l'imbrication
+                st.markdown("### 👁️ Aperçu des données")
+                
+                # Toggle pour afficher/masquer l'aperçu
+                show_preview = st.checkbox("Afficher l'aperçu", key="show_excel_preview", value=False)
+                
+                if show_preview:
                     try:
                         df = services['excel_handler'].sheet_to_dataframe(wb, selected)
                         st.dataframe(
@@ -120,6 +124,7 @@ class SidebarComponents:
                             use_container_width=True,
                             height=200
                         )
+                        st.caption(f"Affichage des 10 premières lignes sur {len(df)}")
                     except Exception as e:
                         st.error(f"Erreur affichage: {str(e)}")
         
@@ -149,8 +154,16 @@ class SidebarComponents:
                     # Extraire et afficher les labels
                     labels = services['json_helper'].extract_labels(data)
                     if labels:
-                        with st.expander("🏷️ Labels extraits", expanded=False):
-                            st.write(labels)
+                        # Utiliser un toggle au lieu d'un expander
+                        st.markdown("### 🏷️ Labels extraits")
+                        show_labels = st.checkbox("Afficher les labels", key="show_json_labels", value=False)
+                        if show_labels:
+                            # Afficher en colonnes pour gagner de la place
+                            n_cols = 3
+                            cols = st.columns(n_cols)
+                            for i, label in enumerate(labels):
+                                with cols[i % n_cols]:
+                                    st.caption(f"• {label}")
                     
                     # Actions
                     col1, col2 = st.columns(2)
@@ -165,9 +178,12 @@ class SidebarComponents:
                             else:
                                 st.warning("Chargez d'abord un fichier Excel")
                 
-                # Aperçu
-                with st.expander("📋 Aperçu JSON", expanded=False):
-                    st.json(data)
+                # Aperçu JSON - utiliser un toggle
+                st.markdown("### 📋 Aperçu JSON")
+                show_json = st.checkbox("Afficher le JSON", key="show_json_preview", value=False)
+                if show_json:
+                    # Limiter la hauteur pour ne pas prendre trop de place
+                    st.json(data, expanded=False)
                     
             except json.JSONDecodeError as e:
                 st.error(f"❌ Erreur de lecture JSON : {str(e)}")
@@ -177,7 +193,7 @@ class SidebarComponents:
     @staticmethod
     def render_history_section(chat_handler):
         """Rendu de la section historique"""
-        st.markdown("### 📚 Historique de conversation")
+        st.markdown("### 📚 Historique")
         
         messages_count = len(st.session_state.get('chat_history', []))
         
