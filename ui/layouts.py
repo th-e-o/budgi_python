@@ -61,7 +61,7 @@ class MainLayout:
         # Get logo first
         logo_base64 = self._get_logo_base64() or ""
         
-        # Build navbar HTML with proper escaping
+        # Build navbar HTML with Unicode icons instead of SVG
         navbar_html = f"""
         <div class="top-navbar">
             <div class="navbar-content">
@@ -74,33 +74,19 @@ class MainLayout:
                 <div class="navbar-controls">
                     <div class="layout-switcher">
                         <button class="layout-btn" data-layout="chat" title="Vue Chat">
-                            <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                                <path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"></path>
-                            </svg>
+                            <span class="layout-icon">💬</span>
                         </button>
                         <button class="layout-btn active" data-layout="split" title="Vue Partagée">
-                            <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                                <rect x="3" y="3" width="18" height="18" rx="2"></rect>
-                                <line x1="12" y1="3" x2="12" y2="21"></line>
-                            </svg>
+                            <span class="layout-icon">⚡</span>
                         </button>
                         <button class="layout-btn" data-layout="excel" title="Vue Excel">
-                            <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                                <rect x="3" y="3" width="18" height="18" rx="2"></rect>
-                                <line x1="3" y1="9" x2="21" y2="9"></line>
-                                <line x1="3" y1="15" x2="21" y2="15"></line>
-                                <line x1="9" y1="3" x2="9" y2="21"></line>
-                                <line x1="15" y1="3" x2="15" y2="21"></line>
-                            </svg>
+                            <span class="layout-icon">📊</span>
                         </button>
                     </div>
                     
                     <div class="navbar-actions">
                         <button class="nav-action-btn" id="notifications-btn">
-                            <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                                <path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"></path>
-                                <path d="M13.73 21a2 2 0 0 1-3.46 0"></path>
-                            </svg>
+                            <span class="nav-icon">🔔</span>
                             <span class="notification-badge">2</span>
                         </button>
                     </div>
@@ -465,10 +451,10 @@ class MainLayout:
     def _render_chat_header(self):
         """Renders modern chat header"""
         logo_base64 = self._get_logo_base64()
-        header_html = """
+        header_html = f"""
         <div class="modern-chat-header">
             <div class="chat-header-content">
-                <img src="data:image/png;base64,{logo}" class="chat-logo" alt="BudgiBot">
+                {'<img src="data:image/png;base64,' + logo_base64 + '" class="chat-logo" alt="BudgiBot">' if logo_base64 else '<div class="chat-logo-placeholder">🤖</div>'}
                 <div class="chat-header-info">
                     <h3>Assistant BudgiBot</h3>
                     <span class="chat-status">
@@ -479,21 +465,15 @@ class MainLayout:
             </div>
             <div class="chat-header-actions">
                 <button class="header-action-btn" title="Historique">
-                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                        <circle cx="12" cy="12" r="10"/>
-                        <polyline points="12 6 12 12 16 14"/>
-                    </svg>
+                    <span class="header-icon">📚</span>
                 </button>
                 <button class="header-action-btn" title="Paramètres">
-                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                        <circle cx="12" cy="12" r="3"/>
-                        <path d="M12 1v6m0 6v6m9-9h-6m-6 0H3"/>
-                    </svg>
+                    <span class="header-icon">⚙️</span>
                 </button>
             </div>
         </div>
         """
-        st.markdown(header_html.format(logo=logo_base64 or ""), unsafe_allow_html=True)
+        st.markdown(header_html, unsafe_allow_html=True)
     
     def _render_chat_input(self, on_message_send: Callable, on_file_upload: Callable):
         """Renders modern chat input area"""
@@ -521,12 +501,7 @@ class MainLayout:
             # Voice input button (placeholder)
             st.markdown("""
             <button class="voice-input-btn" title="Entrée vocale">
-                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                    <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/>
-                    <path d="M19 10v2a7 7 0 0 1-14 0v-2"/>
-                    <line x1="12" y1="19" x2="12" y2="23"/>
-                    <line x1="8" y1="23" x2="16" y2="23"/>
-                </svg>
+                <span class="voice-icon">🎤</span>
             </button>
             """, unsafe_allow_html=True)
         
@@ -547,19 +522,10 @@ class MainLayout:
         st.markdown("""
         <div class="floating-actions">
             <button class="fab fab-primary" id="quick-extract" title="Extraction rapide">
-                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                    <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
-                    <polyline points="14 2 14 8 20 8"/>
-                    <line x1="16" y1="13" x2="8" y2="13"/>
-                    <line x1="16" y1="17" x2="8" y2="17"/>
-                    <polyline points="10 9 9 9 8 9"/>
-                </svg>
+                <span class="fab-icon">📄</span>
             </button>
             <button class="fab fab-secondary" id="new-chat" title="Nouvelle conversation">
-                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                    <line x1="12" y1="5" x2="12" y2="19"/>
-                    <line x1="5" y1="12" x2="19" y2="12"/>
-                </svg>
+                <span class="fab-icon">➕</span>
             </button>
         </div>
         
@@ -567,7 +533,7 @@ class MainLayout:
         document.addEventListener('DOMContentLoaded', function() {
             document.getElementById('quick-extract')?.addEventListener('click', function() {
                 // Trigger extract budget action
-                const btn = document.querySelector('button:contains("Extraire données budgétaires")');
+                const btn = document.querySelector('button[title*="Extraire"]');
                 if (btn) btn.click();
             });
             
@@ -587,11 +553,7 @@ class MainLayout:
         <div id="drop-overlay" class="drop-overlay">
             <div class="drop-content">
                 <div class="drop-icon">
-                    <svg width="100" height="100" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
-                        <path d="M7 18a4.6 4.4 0 0 1 0-9 5 4.65 0 0 1 11.03.1h.57a3.4 3.4 0 0 1 .1 6.8"/>
-                        <polyline points="12 13 12 21"/>
-                        <polyline points="9 18 12 21 15 18"/>
-                    </svg>
+                    <span style="font-size: 100px;">📥</span>
                 </div>
                 <h2>Déposez votre fichier ici</h2>
                 <p>PDF, DOCX, XLSX, JSON, TXT, MSG</p>

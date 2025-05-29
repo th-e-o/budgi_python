@@ -105,6 +105,45 @@ def get_main_styles() -> str:
             box-shadow: var(--shadow-md);
         }
         
+        .chat-logo-placeholder {
+            width: 45px;
+            height: 45px;
+            border-radius: 12px;
+            background: linear-gradient(135deg, var(--primary) 0%, var(--primary-dark) 100%);
+            color: white;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 1.5rem;
+            box-shadow: 0 4px 8px rgba(0, 0, 0, 0.2);
+        }
+        
+        /* Layout icon styling */
+        .layout-icon {
+            font-size: 1.25rem;
+            line-height: 1;
+        }
+        
+        .nav-icon {
+            font-size: 1.25rem;
+            line-height: 1;
+        }
+        
+        .header-icon {
+            font-size: 1rem;
+            line-height: 1;
+        }
+        
+        .fab-icon {
+            font-size: 1.5rem;
+            line-height: 1;
+        }
+        
+        .voice-icon {
+            font-size: 1.25rem;
+            line-height: 1;
+        }
+        
         .navbar-title {
             font-size: 1.5rem;
             font-weight: 700;
