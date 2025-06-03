@@ -24,20 +24,27 @@ class MainLayout:
         self.input_components = InputComponents()
     
     def render(self, 
-               on_message_send: Callable,
-               on_file_upload: Callable,
-               on_tool_action: Callable):
-        """Renders the complete modern application layout"""
+           on_message_send: Callable,
+           on_file_upload: Callable,
+           on_tool_action: Callable):
+        """Renders the complete modern application layout avec fix des marges"""
         
         # Initialize layout state
         if 'layout_mode' not in st.session_state:
-            st.session_state.layout_mode = 'chat'  # Start with chat view
+            st.session_state.layout_mode = 'chat'
+        
+        # Container principal avec marges négatives pour utiliser tout l'espace
+        st.markdown("""
+        <div style="margin: -3rem -1rem -1rem -1rem; min-height: 100vh; background: var(--background);">
+        """, unsafe_allow_html=True)
         
         # Top navigation bar
         self._render_top_navbar()
         
-        # Reduce vertical spacing
-        st.markdown("<div style='margin-top: -2rem;'></div>", unsafe_allow_html=True)
+        # Main content container
+        st.markdown("""
+        <div style="padding: 1rem; height: calc(100vh - 60px); overflow: hidden;">
+        """, unsafe_allow_html=True)
         
         # Main content area based on layout mode
         if st.session_state.layout_mode == 'split':
@@ -52,17 +59,29 @@ class MainLayout:
         
         elif st.session_state.layout_mode == 'chat':
             # Full chat view
-            self._render_chat_panel(on_message_send, on_file_upload, full_width=True)
-            
+            col1, col2, col3 = st.columns([1, 6, 1])
+            with col2:
+                self._render_chat_panel(on_message_send, on_file_upload, full_width=True)
+                
         elif st.session_state.layout_mode == 'excel':
             # Full Excel view
-            self._render_excel_panel(on_tool_action, full_width=True)
+            col1, col2, col3 = st.columns([1, 6, 1])
+            with col2:
+                self._render_excel_panel(on_tool_action, full_width=True)
+        
+        # Fermer le container principal
+        st.markdown('</div></div>', unsafe_allow_html=True)
         
         # Drag and drop overlay
         self._render_drag_drop_overlay()
     
     def _render_top_navbar(self):
-        """Renders simplified top navigation bar"""
+        """Renders simplified top navigation bar avec fix des marges"""
+        # Container avec margin négatif pour compenser les marges Streamlit
+        st.markdown("""
+        <div style="margin: -1rem -1rem 0 -1rem; padding: 0;">
+        """, unsafe_allow_html=True)
+        
         # Get current layout mode for active state
         current_layout = st.session_state.get('layout_mode', 'chat')
         
@@ -71,7 +90,7 @@ class MainLayout:
         
         with col1:
             st.markdown("""
-            <div style="display: flex; align-items: center; gap: 0.75rem; height: 56px;">
+            <div style="display: flex; align-items: center; gap: 0.75rem; height: 56px; padding-left: 1rem;">
                 <div style="width: 36px; height: 36px; border-radius: 8px; background: #0055A4; color: white; display: flex; align-items: center; justify-content: center; font-size: 1.25rem;">🤖</div>
                 <span style="font-size: 1.25rem; font-weight: 600; color: #1e293b;">BudgiBot</span>
                 <span style="font-size: 0.875rem; color: #64748b;">Assistant Budgétaire</span>
@@ -84,90 +103,105 @@ class MainLayout:
             
             with btn_col1:
                 if st.button("💬", key="nav_chat", help="Chat", 
-                           type="primary" if current_layout == 'chat' else "secondary"):
+                        type="primary" if current_layout == 'chat' else "secondary"):
                     st.session_state.layout_mode = 'chat'
                     st.rerun()
             
             with btn_col2:
                 if st.button("⚡", key="nav_split", help="Vue partagée",
-                           type="primary" if current_layout == 'split' else "secondary"):
+                        type="primary" if current_layout == 'split' else "secondary"):
                     st.session_state.layout_mode = 'split'
                     st.rerun()
             
             with btn_col3:
                 if st.button("📊", key="nav_excel", help="Excel",
-                           type="primary" if current_layout == 'excel' else "secondary"):
+                        type="primary" if current_layout == 'excel' else "secondary"):
                     st.session_state.layout_mode = 'excel'
                     st.rerun()
         
-        # Add a separator line
-        st.markdown("<hr style='margin: 0; border: none; border-bottom: 1px solid #e2e8f0;'>", unsafe_allow_html=True)
-    
-    def _render_chat_panel(self, on_message_send: Callable, on_file_upload: Callable, 
-                          full_width: bool = False):
-        """Renders modern chat panel"""
-        panel_class = "chat-panel-full" if full_width else "chat-panel"
-        
-        st.markdown(f'<div class="{panel_class}">', unsafe_allow_html=True)
-        
-        # Chat header
-        st.markdown(self.chat_components.render_header(), unsafe_allow_html=True)
-        
-        # Messages container
-        messages_container = st.container(height=600 if full_width else 500)
-        with messages_container:
-            # Always render messages area (welcome is now a regular message)
-            self._render_messages_area(on_message_send)
-        
-        # Modern input area
-        self._render_chat_input(on_message_send, on_file_upload)
-        
-        st.markdown('</div>', unsafe_allow_html=True)
-    
-    def _render_excel_panel(self, on_tool_action: Callable, full_width: bool = False):
-        """Renders Excel panel with all sections visible"""
-        panel_class = "excel-panel-full" if full_width else "excel-panel"
-        
-        # Excel container with fixed header
-        st.markdown(f"""
-        <div class="{panel_class}">
-            <div class="excel-header">
-                <h3>📊 Espace Excel</h3>
-                <p style="margin: 0.5rem 0 0 0; opacity: 0.9; font-size: 0.875rem;">
-                    Gérez vos données, extrayez les informations budgétaires et utilisez l'outil BPSS
-                </p>
-            </div>
+        # Add a separator line et fermer le container
+        st.markdown("""
+            <hr style='margin: 0; border: none; border-bottom: 1px solid #e2e8f0;'>
         </div>
         """, unsafe_allow_html=True)
-        
-        # Create a scrollable container for all sections
-        with st.container():
-            # Section 1: Données
-            with st.expander("📂 **Données Excel**", expanded=True):
-                st.caption("Visualisez et éditez vos feuilles Excel")
-                self._render_excel_data_tab()
-            
-            # Add spacing between sections
-            st.markdown("<br>", unsafe_allow_html=True)
-            
-            # Section 2: Extraction et Analyse
-            with st.expander("🎯 **Extraction et Analyse Budgétaire**", expanded=True):
-                st.caption("Extrayez automatiquement les données budgétaires de vos documents")
-                self._render_excel_analysis_tab(on_tool_action)
-            
-            # Add spacing between sections
-            st.markdown("<br>", unsafe_allow_html=True)
-                # Section 2bis: Interface de vérification (EN DEHORS des expanders)
-            if st.session_state.get('mapping_report'):
-                st.markdown("<br>", unsafe_allow_html=True)
-                st.markdown("---")
-                self._render_verification_interface()
-
-            # Section 3: Outil BPSS
-            with st.expander("🛠️ **Outil BPSS - Mesures Catégorielles**", expanded=False):
-                st.caption("Traitez automatiquement vos fichiers PP-E-S, DPP18 et BUD45")
-                self._render_excel_tools_tab(on_tool_action)
     
+    def _render_chat_panel(self, on_message_send: Callable, on_file_upload: Callable, 
+                      full_width: bool = False):
+        """Renders modern chat panel avec structure corrigée"""
+        panel_class = "chat-panel-full" if full_width else "chat-panel"
+        
+        # Utiliser un container Streamlit qui englobe tout
+        with st.container():
+            # Header du chat
+            st.markdown(f"""
+            <div class="{panel_class}">
+                {self.chat_components.render_header()}
+                <div class="chat-messages-wrapper">
+            """, unsafe_allow_html=True)
+            
+            # Messages container avec hauteur fixe
+            messages_container = st.container(height=500 if not full_width else 600)
+            with messages_container:
+                self._render_messages_area(on_message_send)
+            
+            # Fermer le wrapper des messages
+            st.markdown('</div>', unsafe_allow_html=True)
+            
+            # Input area dans le même panel
+            st.markdown('<div class="chat-input-wrapper">', unsafe_allow_html=True)
+            self._render_chat_input(on_message_send, on_file_upload)
+            st.markdown('</div></div>', unsafe_allow_html=True)
+        
+    def _render_excel_panel(self, on_tool_action: Callable, full_width: bool = False):
+        """Renders Excel panel avec structure corrigée"""
+        panel_class = "excel-panel-full" if full_width else "excel-panel"
+        
+        # Container principal qui englobe tout
+        with st.container():
+            # Créer la structure complète
+            st.markdown(f"""
+            <div class="{panel_class}">
+                <div class="excel-header">
+                    <h3>📊 Espace Excel</h3>
+                    <p style="margin: 0.5rem 0 0 0; opacity: 0.9; font-size: 0.875rem;">
+                        Gérez vos données, extrayez les informations budgétaires et utilisez l'outil BPSS
+                    </p>
+                </div>
+                <div class="excel-content">
+            """, unsafe_allow_html=True)
+            
+            # Container scrollable pour les sections
+            with st.container():
+                # Section 1: Données
+                with st.expander("📂 **Données Excel**", expanded=True):
+                    st.caption("Visualisez et éditez vos feuilles Excel")
+                    self._render_excel_data_tab()
+                
+                # Spacing
+                st.markdown("<div style='height: 1rem;'></div>", unsafe_allow_html=True)
+                
+                # Section 2: Extraction et Analyse
+                with st.expander("🎯 **Extraction et Analyse Budgétaire**", expanded=True):
+                    st.caption("Extrayez automatiquement les données budgétaires de vos documents")
+                    self._render_excel_analysis_tab(on_tool_action)
+                
+                # Spacing
+                st.markdown("<div style='height: 1rem;'></div>", unsafe_allow_html=True)
+                
+                # Section 3: Outil BPSS
+                with st.expander("🛠️ **Outil BPSS - Mesures Catégorielles**", expanded=False):
+                    st.caption("Traitez automatiquement vos fichiers PP-E-S, DPP18 et BUD45")
+                    self._render_excel_tools_tab(on_tool_action)
+            
+            # Fermer les divs
+            st.markdown('</div></div>', unsafe_allow_html=True)
+            
+            # Interface de vérification APRÈS le panel principal
+            if st.session_state.get('mapping_report'):
+                st.markdown("<div style='margin-top: 2rem;'>", unsafe_allow_html=True)
+                self._render_verification_interface()
+                st.markdown("</div>", unsafe_allow_html=True)
+        
     def _render_excel_data_tab(self):
         """Renders Excel data visualization tab - simplified"""
         if not st.session_state.get('excel_workbook'):
@@ -391,9 +425,18 @@ class MainLayout:
 
     def _render_verification_interface(self):
         """Rend l'interface de vérification du mapping en dehors des expanders"""
-        st.markdown("### 🔍 Vérification et validation du mapping")
-        
+        if not st.session_state.get('mapping_report'):
+            return
+            
         report = st.session_state.mapping_report
+        
+        # Vérifier que le rapport contient les clés nécessaires
+        required_keys = ['summary', 'by_confidence', 'low_confidence', 'unmapped']
+        if not all(key in report for key in required_keys):
+            st.error("Le rapport de mapping est incomplet")
+            return
+        
+        st.markdown("### 🔍 Vérification et validation du mapping")
         
         # Métriques de synthèse
         col1, col2, col3, col4 = st.columns(4)
@@ -682,11 +725,10 @@ class MainLayout:
         if st.session_state.get('extracted_data'):
             df_all = pd.DataFrame(st.session_state.extracted_data)
             
-            # Vérifier que les colonnes existent
-            required_cols = ['IsMapped', 'NeedsReview', 'ConfidenceScore', 'SheetName', 'Montant']
-            missing_cols = [col for col in required_cols if col not in df_all.columns]
+            # Vérifier que les données enrichies sont disponibles
+            has_mapping_data = all(col in df_all.columns for col in ['IsMapped', 'ConfidenceScore'])
             
-            if not missing_cols:
+            if has_mapping_data:
                 # Filtres avancés
                 filter_col1, filter_col2, filter_col3, filter_col4 = st.columns(4)
                 
@@ -699,23 +741,31 @@ class MainLayout:
                     )
                 
                 with filter_col2:
-                    conf_range = st.slider(
-                        "Plage de confiance",
-                        0.0, 1.0, (0.0, 1.0), 0.1,
-                        key="conf_range_overview"
-                    )
+                    # Vérifier que ConfidenceScore existe et a des valeurs
+                    if 'ConfidenceScore' in df_all.columns and df_all['ConfidenceScore'].notna().any():
+                        conf_range = st.slider(
+                            "Plage de confiance",
+                            0.0, 1.0, (0.0, 1.0), 0.1,
+                            key="conf_range_overview"
+                        )
+                    else:
+                        conf_range = (0.0, 1.0)
+                        st.info("Pas de scores de confiance disponibles")
                 
                 with filter_col3:
-                    unique_sheets = df_all['SheetName'].dropna().unique().tolist()
-                    sheet_filter = st.multiselect(
-                        "Feuilles",
-                        ["Toutes"] + unique_sheets,
-                        default=["Toutes"],
-                        key="sheet_filter_overview"
-                    )
+                    if 'SheetName' in df_all.columns:
+                        unique_sheets = df_all['SheetName'].dropna().unique().tolist()
+                        sheet_filter = st.multiselect(
+                            "Feuilles",
+                            ["Toutes"] + unique_sheets,
+                            default=["Toutes"],
+                            key="sheet_filter_overview"
+                        )
+                    else:
+                        sheet_filter = ["Toutes"]
                 
                 with filter_col4:
-                    if df_all['Montant'].notna().any():
+                    if 'Montant' in df_all.columns and df_all['Montant'].notna().any():
                         min_val = float(df_all['Montant'].min() / 1000)
                         max_val = float(df_all['Montant'].max() / 1000)
                         amount_range = st.slider(
@@ -726,12 +776,85 @@ class MainLayout:
                     else:
                         amount_range = (0, 0)
                 
-                # [Rest of the filtering logic from the previous version...]
-                # [Include all the filtering, statistics, and display code]
+                # Appliquer les filtres
+                filtered_df = df_all.copy()
                 
+                # Filtre statut
+                status_conditions = []
+                if "Mappé" in status_filter and 'IsMapped' in filtered_df.columns:
+                    status_conditions.append(filtered_df['IsMapped'] == True)
+                if "Non mappé" in status_filter and 'IsMapped' in filtered_df.columns:
+                    status_conditions.append(filtered_df['IsMapped'] == False)
+                if "À réviser" in status_filter and 'NeedsReview' in filtered_df.columns:
+                    status_conditions.append(filtered_df['NeedsReview'] == True)
+                
+                if status_conditions:
+                    from functools import reduce
+                    import operator
+                    combined_condition = reduce(operator.or_, status_conditions)
+                    filtered_df = filtered_df[combined_condition]
+                
+                # Filtre confiance
+                if 'ConfidenceScore' in filtered_df.columns:
+                    filtered_df = filtered_df[
+                        (filtered_df['ConfidenceScore'] >= conf_range[0]) &
+                        (filtered_df['ConfidenceScore'] <= conf_range[1])
+                    ]
+                
+                # Filtre feuilles
+                if "Toutes" not in sheet_filter and 'SheetName' in filtered_df.columns:
+                    filtered_df = filtered_df[filtered_df['SheetName'].isin(sheet_filter)]
+                
+                # Filtre montant
+                if 'Montant' in filtered_df.columns:
+                    filtered_df = filtered_df[
+                        (filtered_df['Montant'] >= amount_range[0] * 1000) &
+                        (filtered_df['Montant'] <= amount_range[1] * 1000)
+                    ]
+                
+                # Afficher les résultats
+                st.markdown(f"### 📊 {len(filtered_df)} entrées (sur {len(df_all)} total)")
+                
+                # Colonnes à afficher selon disponibilité
+                display_columns = ['Description', 'Montant']
+                optional_columns = ['CelluleCible', 'ConfidenceScore', 'IsMapped', 'NeedsReview']
+                
+                for col in optional_columns:
+                    if col in filtered_df.columns:
+                        display_columns.append(col)
+                
+                # Afficher le DataFrame
+                st.dataframe(
+                    filtered_df[display_columns],
+                    use_container_width=True,
+                    height=400
+                )
+                
+                # Options d'export
+                col1, col2 = st.columns(2)
+                with col1:
+                    csv = filtered_df.to_csv(index=False)
+                    st.download_button(
+                        "📥 Exporter les données filtrées",
+                        data=csv,
+                        file_name=f"mapping_filtered_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
+                        mime="text/csv"
+                    )
+                
+                with col2:
+                    if st.button("🔄 Rafraîchir"):
+                        st.rerun()
+            
             else:
-                st.warning("Les colonnes de mapping ne sont pas disponibles. Lancez d'abord le mapping.")
-    
+                st.warning("Les colonnes de mapping ne sont pas disponibles. Lancez d'abord le mapping automatique.")
+                
+                # Afficher quand même les données de base
+                display_cols = ['Description', 'Montant', 'Axe', 'Date', 'Nature']
+                available_cols = [col for col in display_cols if col in df_all.columns]
+                
+                if available_cols:
+                    st.dataframe(df_all[available_cols], use_container_width=True, height=400)
+        
     def _render_corrections_tab(self):
         """Tab pour corrections manuelles"""
         st.info("Interface pour corriger les mappings en masse")

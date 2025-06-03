@@ -17,6 +17,12 @@ st.set_page_config(
     page_title="BudgiBot - Assistant Budgétaire",
     page_icon="🤖",
     layout="wide",
+    initial_sidebar_state="collapsed",  # Pas de sidebar
+    menu_items={
+        'Get Help': None,
+        'Report a bug': None,
+        'About': None
+    }
 )
 
 # Import des modules
@@ -42,6 +48,60 @@ logger = logging.getLogger(__name__)
 # Injection des styles
 st.markdown(get_main_styles(), unsafe_allow_html=True)
 st.markdown(get_javascript(), unsafe_allow_html=True)
+st.markdown("""
+<style>
+    /* Forcer la suppression de tous les paddings/margins Streamlit */
+    .main > div {
+        padding-top: 0rem !important;
+        padding-bottom: 0rem !important;
+        padding-left: 0rem !important;
+        padding-right: 0rem !important;
+    }
+    
+    /* Supprimer l'espace du header Streamlit */
+    header[data-testid="stHeader"] {
+        display: none !important;
+    }
+    
+    /* Supprimer le footer */
+    footer {
+        display: none !important;
+    }
+    
+    /* Fix pour le premier élément */
+    .element-container:first-child {
+        margin-top: 0 !important;
+    }
+    
+    /* Supprimer les marges des blocks */
+    .block-container {
+        padding: 0 !important;
+        margin: 0 !important;
+        max-width: 100% !important;
+    }
+    
+    /* Fix spécifique pour le container de l'app */
+    section.main {
+        padding: 0 !important;
+        margin: 0 !important;
+    }
+    
+    /* Cacher complètement le menu hamburger */
+    button[kind="header"] {
+        display: none !important;
+    }
+    
+    /* S'assurer que le viewport utilise toute la hauteur */
+    #root > div:nth-child(1) {
+        overflow: hidden !important;
+    }
+    
+    .stApp {
+        margin: 0 !important;
+        padding: 0 !important;
+    }
+</style>
+""", unsafe_allow_html=True)
 
 # Context manager pour fichiers temporaires
 @contextlib.contextmanager
@@ -111,6 +171,8 @@ def init_session_state():
         'processed_files': set(),
         'temp_files': [],
         'layout_mode': 'chat',
+        'mapping_report': None,  # Ajouter cette ligne
+        'excel_tab': 'data',  # Ajouter pour gérer l'onglet actif
     }
     
     # Initialiser les valeurs par défaut
@@ -409,8 +471,8 @@ def parse_excel_formulas():
             st.error(f"❌ Erreur: {str(e)}")
 
 async def map_budget_to_cells():
-    """Mappe les données aux cellules Excel"""
-    if not st.session_state.extracted_data or not st.session_state.json_data:
+    """Mappe les données aux cellules Excel avec gestion du rapport"""
+    if not st.session_state.get('extracted_data') or not st.session_state.get('json_data'):
         st.error("❌ Données manquantes pour le mapping")
         return
     
@@ -419,31 +481,80 @@ async def map_budget_to_cells():
             mapper = services['budget_mapper']
             tags = services['json_helper'].get_tags_for_mapping(st.session_state.json_data)
             
-            # Mapper
+            # Créer une barre de progression
+            progress_bar = st.progress(0)
+            progress_text = st.empty()
+            
+            def update_progress(percent, text):
+                progress_bar.progress(int(percent))
+                progress_text.text(text)
+            
+            # Mapper avec callback de progression
             mapping = await mapper.map_entries_to_cells(
                 st.session_state.extracted_data,
-                tags
+                tags,
+                progress_callback=update_progress
             )
             
+            # Nettoyer la barre de progression
+            progress_bar.empty()
+            progress_text.empty()
+            
             if mapping and st.session_state.excel_workbook:
-                # Appliquer
+                # Enrichir les entrées avec le mapping
                 entries_df = pd.DataFrame(st.session_state.extracted_data)
+                enriched_df = mapper.enrich_entries_with_mapping(entries_df, mapping)
+                
+                # Mettre à jour les données extraites enrichies
+                st.session_state.extracted_data = enriched_df.to_dict('records')
+                
+                # Générer le rapport de mapping
+                report = mapper.generate_mapping_report(mapping, entries_df)
+                st.session_state.mapping_report = report
+                
+                # Appliquer au workbook
                 success, errors = mapper.apply_mapping_to_excel(
                     st.session_state.excel_workbook,
                     mapping,
                     entries_df
                 )
                 
+                # Afficher les résultats
                 if success > 0:
-                    st.success(f"✅ {success} cellules mises à jour")
+                    st.success(f"✅ {success} cellules mises à jour avec succès!")
+                    
+                    # Afficher un résumé du rapport
+                    col1, col2, col3 = st.columns(3)
+                    with col1:
+                        st.metric("Taux de mapping", f"{report['summary']['mapping_rate']:.1f}%")
+                    with col2:
+                        st.metric("Confiance moyenne", f"{report['summary']['average_confidence']:.1%}")
+                    with col3:
+                        st.metric("À vérifier", len(report['low_confidence']))
+                    
+                    # Message dans le chat
+                    st.session_state.chat_history.append({
+                        'role': 'assistant',
+                        'content': f"✅ Mapping terminé!\n\n• **{success}** cellules mises à jour\n• **{report['summary']['mapping_rate']:.1f}%** de taux de mapping\n• **{report['summary']['average_confidence']:.1%}** de confiance moyenne\n\nConsultez l'interface de vérification dans l'onglet Excel pour valider les mappings.",
+                        'timestamp': datetime.now().strftime("%H:%M")
+                    })
+                    
+                    # Basculer vers la vue Excel pour voir les résultats
+                    st.session_state.layout_mode = 'excel'
+                    st.rerun()
+                    
                 if errors:
-                    with st.expander("⚠️ Erreurs"):
-                        for error in errors:
+                    with st.expander("⚠️ Problèmes rencontrés"):
+                        for error in errors[:10]:  # Limiter à 10 erreurs
                             st.warning(error)
+                        if len(errors) > 10:
+                            st.warning(f"... et {len(errors) - 10} autres problèmes")
+            else:
+                st.warning("⚠️ Aucun mapping n'a pu être établi")
                             
         except Exception as e:
             logger.error(f"Erreur mapping: {str(e)}")
-            st.error(f"❌ Erreur: {str(e)}")
+            st.error(f"❌ Erreur lors du mapping: {str(e)}")
 
 # Initialisation des services
 services = init_services()
