@@ -1,8 +1,10 @@
+# core/llm_client.py
 import httpx
 import json
 from typing import List, Dict, Optional
 import logging
 from config import config
+import asyncio
 
 logger = logging.getLogger(__name__)
 
@@ -11,6 +13,8 @@ class MistralClient:
         self.api_key = config.MISTRAL_API_KEY
         self.api_url = config.MISTRAL_API_URL
         self.model = config.MISTRAL_MODEL
+        self.max_retries = 3
+        self.retry_delay = 2.0  # Délai initial en secondes
         self.preprompt = {
             "role": "system",
             "content": (
@@ -22,7 +26,7 @@ class MistralClient:
         }
     
     async def chat(self, messages: List[Dict[str, str]], model: Optional[str] = None) -> Optional[str]:
-        """Envoie une requête chat à l'API Mistral"""
+        """Envoie une requête chat à l'API Mistral avec gestion du rate limiting"""
         if not self.api_key:
             logger.error("Clé API Mistral manquante")
             return None
@@ -40,27 +44,41 @@ class MistralClient:
             "messages": full_messages
         }
         
-        try:
-            async with httpx.AsyncClient(timeout=60.0) as client:
-                response = await client.post(
-                    self.api_url,
-                    headers=headers,
-                    json=payload
-                )
-                
-                if response.status_code != 200:
-                    logger.error(f"Erreur API Mistral: {response.status_code} - {response.text}")
-                    return None
-                
-                data = response.json()
-                return data["choices"][0]["message"]["content"]
-                
-        except Exception as e:
-            logger.error(f"Erreur lors de l'appel API Mistral: {str(e)}")
-            return None
+        for retry in range(self.max_retries):
+            try:
+                async with httpx.AsyncClient(timeout=60.0) as client:
+                    response = await client.post(
+                        self.api_url,
+                        headers=headers,
+                        json=payload
+                    )
+                    
+                    if response.status_code == 429:
+                        # Rate limit atteint
+                        retry_delay = self.retry_delay * (2 ** retry)
+                        logger.warning(f"Rate limit atteint. Attente de {retry_delay}s avant retry {retry + 1}/{self.max_retries}")
+                        await asyncio.sleep(retry_delay)
+                        continue
+                    
+                    if response.status_code != 200:
+                        logger.error(f"Erreur API Mistral: {response.status_code} - {response.text}")
+                        return None
+                    
+                    data = response.json()
+                    return data["choices"][0]["message"]["content"]
+                    
+            except Exception as e:
+                logger.error(f"Erreur lors de l'appel API Mistral: {str(e)}")
+                if retry < self.max_retries - 1:
+                    await asyncio.sleep(self.retry_delay)
+                    continue
+                return None
+        
+        logger.error("Échec après tous les retries")
+        return None
     
     async def extract_budget_data(self, content: str) -> Optional[List[Dict]]:
-        """Extrait les données budgétaires d'un texte"""
+        """Extrait les données budgétaires d'un texte avec gestion du rate limiting"""
         prompt = (
             "Tu es un assistant budgétaire. "
             "Analyse le texte fourni et retourne UNIQUEMENT un tableau JSON avec les données budgétaires détectées au format : "

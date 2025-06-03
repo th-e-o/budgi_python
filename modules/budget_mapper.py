@@ -114,9 +114,9 @@ class BudgetMapper:
             
             all_mappings.extend(batch_mappings)
             
-            # Pause entre les batches
+            # Pause entre les batches pour éviter le rate limiting
             if batch_idx + self.batch_size < len(entries):
-                await asyncio.sleep(0.3)
+                await asyncio.sleep(1.5)  # Augmenter la pause pour respecter les limites de l'API
         
         logger.info(f"Mapping terminé: {len(all_mappings)} mappings créés")
         return all_mappings
