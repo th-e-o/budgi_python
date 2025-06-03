@@ -1,6 +1,6 @@
 # modules/json_helper.py
 import json
-import pandas as pd  # <-- Ajout de l'import manquant
+import pandas as pd
 from typing import List, Dict, Any, Optional
 import logging
 

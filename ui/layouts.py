@@ -258,12 +258,12 @@ class MainLayout:
             st.info("📂 Chargez d'abord un fichier dans l'onglet Données ou via le chat")
             return
         
-        # JSON configuration - simplified
+        # JSON configuration for mapping
         json_file = st.file_uploader(
-            "📄 Configuration JSON (optionnel)", 
+            "📄 Configuration JSON pour mapping automatique (optionnel)", 
             type=['json'], 
             key="json_analysis",
-            help="Pour le mapping automatique des cellules"
+            help="Permet de mapper automatiquement les données extraites vers les cellules Excel"
         )
         
         if json_file:
@@ -271,8 +271,8 @@ class MainLayout:
             try:
                 data = json.load(json_file)
                 st.session_state.json_data = data
-                labels = self.services['json_helper'].extract_labels(data)
-                st.success(f"✅ JSON chargé ({len(labels)} labels)")
+                tags_count = len(data.get('tags', []))
+                st.success(f"✅ Configuration JSON chargée ({tags_count} cellules cibles)")
             except Exception as e:
                 st.error(f"Erreur JSON: {str(e)}")
         
@@ -325,7 +325,7 @@ class MainLayout:
             
             with col2:
                 if st.session_state.get('json_data') and st.session_state.get('excel_workbook'):
-                    if st.button("➡️ Mapper vers Excel", use_container_width=True, type="secondary"):
+                    if st.button("🎯 Mapper vers Excel", use_container_width=True, type="secondary"):
                         on_tool_action({'action': 'map_budget_cells'})
                         
             # Save changes if modified

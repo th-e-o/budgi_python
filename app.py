@@ -412,7 +412,7 @@ def parse_excel_formulas():
 async def map_budget_to_cells():
     """Mappe les données aux cellules Excel"""
     if not st.session_state.extracted_data or not st.session_state.json_data:
-        st.error("❌ Données manquantes")
+        st.error("❌ Données manquantes pour le mapping")
         return
     
     with st.spinner("Mapping en cours..."):

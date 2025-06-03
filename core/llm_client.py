@@ -59,34 +59,6 @@ class MistralClient:
             logger.error(f"Erreur lors de l'appel API Mistral: {str(e)}")
             return None
     
-    async def analyze_labels(self, labels: List[str]) -> Optional[Dict]:
-        """Analyse les labels pour identifier axes et contexte"""
-        if not labels:
-            return None
-        
-        labels_txt = ", ".join(labels)
-        prompt = (
-            f"Tu es un assistant budgétaire. "
-            f"Analyse la liste de labels suivants et identifie les axes pertinents et leur contexte pour une extraction budgétaire. "
-            f"Labels : {labels_txt} "
-            f"Retourne STRICTEMENT un JSON avec deux champs : "
-            f'{{\"axes\": [...], \"contexte_general\": \"...\"}} '
-            f"NE FOURNIS PAS D'EXPLICATION HORS JSON."
-        )
-        
-        messages = [{"role": "system", "content": prompt}]
-        response = await self.chat(messages)
-        
-        if response:
-            try:
-                # Nettoyer la réponse
-                cleaned = response.replace("```json", "").replace("```", "").strip()
-                return json.loads(cleaned)
-            except json.JSONDecodeError:
-                logger.error("Impossible de parser la réponse JSON")
-                return None
-        return None
-    
     async def extract_budget_data(self, content: str) -> Optional[List[Dict]]:
         """Extrait les données budgétaires d'un texte"""
         prompt = (
