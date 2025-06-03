@@ -1,4 +1,4 @@
-# app.py - Updated for modern UI
+# app.py - Simplified version with welcome message
 import streamlit as st
 import asyncio
 from pathlib import Path
@@ -9,20 +9,14 @@ import tempfile
 import contextlib
 import os
 import pandas as pd
-from modules.excel_parser.parser_v3 import ExcelFormulaParser, ParserConfig
+from modules.excel_parser.parser_v3 import ExcelFormulaParser
 from modules.budget_mapper import BudgetMapper
 
-# Configuration de la page - Wide layout for better Excel display
+# Configuration de la page
 st.set_page_config(
-    page_title="BudgiBot - Assistant Budgétaire Intelligent",
+    page_title="BudgiBot - Assistant Budgétaire",
     page_icon="🤖",
     layout="wide",
-    initial_sidebar_state="collapsed",  # Start with collapsed sidebar for cleaner look
-    menu_items={
-        'Get Help': None,
-        'Report a bug': None,
-        'About': "BudgiBot - Assistant Budgétaire Intelligent v2.0"
-    }
 )
 
 # Import des modules
@@ -35,17 +29,18 @@ from modules.bpss_tool import BPSSTool
 from modules.json_helper import JSONHelper
 from config import config
 
-# Import des composants UI avec les nouveaux styles
+# Import des composants UI
 from ui import get_main_styles, get_javascript, MainLayout
-from ui.styles_additions import get_additional_styles
 
 # Configuration du logging
-logging.basicConfig(level=logging.INFO)
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
 logger = logging.getLogger(__name__)
 
-# Injection des styles et scripts - Combined modern styles
+# Injection des styles
 st.markdown(get_main_styles(), unsafe_allow_html=True)
-st.markdown(get_additional_styles(), unsafe_allow_html=True)
 st.markdown(get_javascript(), unsafe_allow_html=True)
 
 # Context manager pour fichiers temporaires
@@ -69,6 +64,7 @@ def temporary_file(content, suffix=''):
 # Initialisation des services
 @st.cache_resource
 def init_services():
+    """Initialise tous les services nécessaires"""
     services = {
         'llm_client': MistralClient(),
         'file_handler': FileHandler(),
@@ -77,110 +73,116 @@ def init_services():
         'budget_extractor': BudgetExtractor(),
         'bpss_tool': BPSSTool(),
         'json_helper': JSONHelper(),
-        'budget_mapper': BudgetMapper(MistralClient())  # Add budget mapper
+        'budget_mapper': BudgetMapper(MistralClient())
     }
     
-    # Register cleanup for Excel handler
+    # Nettoyage automatique des fichiers temporaires
     import atexit
     atexit.register(lambda: services['excel_handler'].cleanup_temp_files())
     
     return services
 
-services = init_services()
+# Message de bienvenue
+WELCOME_MESSAGE = """👋 Bonjour ! Je suis BudgiBot, votre assistant budgétaire intelligent.
+
+Je peux vous aider à :
+• 📊 **Analyser vos fichiers Excel** - Chargez un fichier .xlsx pour commencer
+• 💰 **Extraire des données budgétaires** - À partir de PDF, Word, emails ou textes
+• 🛠️ **Utiliser l'outil BPSS** - Pour traiter vos fichiers PP-E-S, DPP18 et BUD45
+
+**Pour commencer :**
+- Envoyez-moi un fichier en cliquant sur 📎 ou glissez-le directement ici
+- Ou posez-moi une question sur vos besoins budgétaires
+
+💡 *Astuce : Utilisez la vue partagée (⚡) pour voir Excel et le chat en même temps !*"""
 
 def init_session_state():
-    """Initialise l'état de session avec les nouvelles variables"""
+    """Initialise l'état de session"""
     defaults = {
         'chat_history': [],
         'current_file': None,
         'excel_workbook': None,
         'extracted_data': None,
         'is_typing': False,
-        'bpss_response': None,
-        'show_bpss_tool': False,
         'pending_action': None,
         'json_data': None,
         'parsed_formulas': None,
-        'excel_script': None,
         'message_input_key': 0,
-        'scroll_to_bottom': False,
         'processed_files': set(),
         'temp_files': [],
-        'layout_mode': 'split',  # New: layout mode
-        'excel_tab': 'data',     # New: active Excel tab
-        'theme': 'light',        # New: theme preference
-        'show_welcome': True     # New: show welcome message
+        'layout_mode': 'chat',
+        'excel_tab': 'data',
     }
     
+    # Initialiser les valeurs par défaut
     for key, default_value in defaults.items():
         if key not in st.session_state:
             st.session_state[key] = default_value
+    
+    # Ajouter le message de bienvenue si première fois
+    if not st.session_state.chat_history:
+        st.session_state.chat_history.append({
+            'role': 'assistant',
+            'content': WELCOME_MESSAGE,
+            'timestamp': datetime.now().strftime("%H:%M"),
+            'type': 'welcome'
+        })
 
-# Nettoyage des fichiers temporaires
 def cleanup_temp_files():
     """Nettoie les fichiers temporaires"""
     for temp_file in st.session_state.get('temp_files', []):
         try:
             if os.path.exists(temp_file):
                 os.unlink(temp_file)
-        except:
-            pass
+                logger.info(f"Fichier temporaire supprimé: {temp_file}")
+        except Exception as e:
+            logger.warning(f"Impossible de supprimer {temp_file}: {str(e)}")
     st.session_state.temp_files = []
 
-# Gestionnaires d'événements améliorés
+# Gestionnaires d'événements
 async def handle_message_send(message: str):
-    """Gère l'envoi d'un message avec animation"""
-    # Hide welcome message
-    st.session_state.show_welcome = False
-    
-    # Ajouter à l'historique
+    """Gère l'envoi d'un message"""
+    # Ajouter le message utilisateur
     st.session_state.chat_history.append({
         'role': 'user',
         'content': message,
         'timestamp': datetime.now().strftime("%H:%M")
     })
     
-    # Incrémenter la clé pour forcer un nouveau widget vide
-    st.session_state.message_input_key += 1
-    
     # Activer l'indicateur de frappe
     st.session_state.is_typing = True
-    
-    # Forcer le scroll vers le bas
-    st.session_state.scroll_to_bottom = True
-    
     st.rerun()
 
 async def process_message():
-    """Traite le message de manière asynchrone avec gestion d'erreur améliorée"""
+    """Traite le message avec le LLM"""
     try:
-        # Obtenir la réponse
-        response = await services['llm_client'].chat(
-            services['chat_handler'].filter_messages_for_api(st.session_state.chat_history)
+        # Préparer les messages pour l'API
+        api_messages = services['chat_handler'].filter_messages_for_api(
+            st.session_state.chat_history
         )
         
+        # Obtenir la réponse
+        response = await services['llm_client'].chat(api_messages)
+        
         if response:
+            # Ajouter la réponse
             st.session_state.chat_history.append({
                 'role': 'assistant',
                 'content': response,
                 'timestamp': datetime.now().strftime("%H:%M")
             })
             
-            # Vérifier si on doit proposer l'outil BPSS
-            last_message = st.session_state.chat_history[-2]['content']
-            keywords = ['bpss', 'outil', 'excel', 'fichier final', 'mesures catégorielles']
-            if any(keyword in last_message.lower() for keyword in keywords):
-                st.session_state.chat_history.append({
-                    'role': 'assistant',
-                    'content': "Je détecte que vous avez besoin de l'outil BPSS. Souhaitez-vous que je le lance pour vous ?",
-                    'type': 'bpss_prompt',
-                    'timestamp': datetime.now().strftime("%H:%M")
-                })
+            # Détecter si BPSS est mentionné
+            last_message = st.session_state.chat_history[-2]['content'].lower()
+            if any(keyword in last_message for keyword in ['bpss', 'mesures catégorielles']):
+                st.session_state.excel_tab = 'tools'
+                st.session_state.layout_mode = 'split'
+                
     except Exception as e:
-        logger.error(f"Erreur lors de l'envoi du message: {str(e)}")
+        logger.error(f"Erreur traitement message: {str(e)}")
         st.session_state.chat_history.append({
             'role': 'assistant',
-            'content': "Désolé, une erreur s'est produite. Pouvez-vous reformuler votre question ?",
+            'content': "❌ Désolé, une erreur s'est produite. Pouvez-vous reformuler ?",
             'timestamp': datetime.now().strftime("%H:%M"),
             'error': True
         })
@@ -189,19 +191,15 @@ async def process_message():
     st.rerun()
 
 async def handle_file_upload(uploaded_file):
-    """Gère l'upload d'un fichier avec feedback visuel amélioré"""
-    # Hide welcome message
-    st.session_state.show_welcome = False
-    
-    # Créer une clé unique pour le fichier
+    """Gère l'upload d'un fichier"""
+    # Éviter les doublons
     file_key = f"{uploaded_file.name}_{uploaded_file.size}"
-    
     if file_key in st.session_state.processed_files:
-        return  # Fichier déjà traité
+        return
     
     st.session_state.processed_files.add(file_key)
     
-    # Notifier l'upload avec style
+    # Ajouter le message d'upload
     st.session_state.chat_history.append({
         'role': 'user',
         'content': f"📎 Fichier envoyé : {uploaded_file.name}",
@@ -212,13 +210,11 @@ async def handle_file_upload(uploaded_file):
     })
     
     st.session_state.is_typing = True
-    st.session_state.scroll_to_bottom = True
     st.rerun()
 
 async def process_file(uploaded_file):
-    """Traite le fichier avec extraction intelligente"""
+    """Traite le fichier uploadé"""
     try:
-        # Utiliser le context manager pour fichier temporaire
         file_content = uploaded_file.getbuffer()
         suffix = Path(uploaded_file.name).suffix
         
@@ -226,17 +222,16 @@ async def process_file(uploaded_file):
             # Lire le contenu
             content = services['file_handler'].read_file(temp_path, uploaded_file.name)
             
-            # Stocker le contenu
+            # Stocker les informations
             st.session_state.current_file = {
                 'name': uploaded_file.name,
                 'content': content,
-                'path': temp_path,
-                'type': uploaded_file.name.split('.')[-1].lower(),
+                'type': suffix[1:].lower(),
                 'raw_bytes': file_content,
                 'size': uploaded_file.size
             }
             
-            # Ajouter dans l'historique (caché)
+            # Stocker le contenu (caché)
             st.session_state.chat_history.append({
                 'role': 'system',
                 'content': content,
@@ -245,227 +240,195 @@ async def process_file(uploaded_file):
                 'timestamp': datetime.now().strftime("%H:%M")
             })
             
-            # Traitement spécifique selon le type
+            # Traitement spécifique
             if uploaded_file.name.endswith('.xlsx'):
                 st.session_state.excel_workbook = services['excel_handler'].load_workbook_from_bytes(
                     file_content
                 )
-                # Auto-switch to split view for Excel files
-                st.session_state.layout_mode = 'split'
-            
+                st.session_state.layout_mode = 'split'  # Vue partagée pour Excel
+                
+                response = f"✅ J'ai chargé votre fichier Excel '{uploaded_file.name}'. Il contient {len(st.session_state.excel_workbook.sheetnames)} feuilles. Vous pouvez maintenant :\n\n• Visualiser et éditer les données dans l'onglet Excel\n• Extraire les données budgétaires\n• Utiliser l'outil BPSS pour les mesures catégorielles"
+                
             elif uploaded_file.name.endswith('.json'):
                 import json
                 st.session_state.json_data = json.loads(content)
+                response = f"✅ Fichier JSON de configuration chargé. Il contient {len(st.session_state.json_data.get('tags', []))} tags pour le mapping automatique."
+                
+            else:
+                # Résumé pour autres types
+                preview = content[:500] + "..." if len(content) > 500 else content
+                response = f"✅ J'ai bien reçu votre fichier '{uploaded_file.name}'. Voici un aperçu :\n\n{preview}\n\nQue souhaitez-vous faire avec ce fichier ?"
             
-            # Obtenir un résumé intelligent
-            summary_prompt = [
-                {'role': 'user', 'content': f"Fichier: {uploaded_file.name}\n\nContenu (extrait):\n{content[:2000]}"},
-                {'role': 'system', 'content': "Fais un résumé en 2-3 lignes et suggère des actions possibles."}
-            ]
-            
-            response = await services['llm_client'].chat(summary_prompt)
-            
-            if response:
-                st.session_state.chat_history.append({
-                    'role': 'assistant',
-                    'content': response,
-                    'timestamp': datetime.now().strftime("%H:%M")
-                })
+            # Ajouter la réponse
+            st.session_state.chat_history.append({
+                'role': 'assistant',
+                'content': response,
+                'timestamp': datetime.now().strftime("%H:%M")
+            })
         
     except Exception as e:
-        logger.error(f"Erreur lors de l'upload du fichier: {str(e)}")
+        logger.error(f"Erreur traitement fichier: {str(e)}")
         st.session_state.chat_history.append({
             'role': 'assistant',
-            'content': f"❌ Erreur lors du traitement du fichier: {str(e)}",
+            'content': f"❌ Erreur lors du traitement : {str(e)}",
             'timestamp': datetime.now().strftime("%H:%M"),
             'error': True
         })
-    finally:
-        st.session_state.is_typing = False
-        st.session_state.scroll_to_bottom = True
     
+    st.session_state.is_typing = False
     st.rerun()
 
 def handle_tool_action(action: dict):
-    """Gère les actions des outils avec feedback amélioré"""
+    """Gère les actions des outils"""
     action_type = action.get('action')
     
-    # Show loading state
-    with st.spinner(f"Traitement en cours: {action_type}..."):
-        if action_type == 'clear_history':
-            st.session_state.chat_history = []
-            st.session_state.processed_files = set()
-            st.session_state.show_welcome = True
-            cleanup_temp_files()
-            st.success("✨ Conversation réinitialisée")
-            st.rerun()
+    if action_type == 'clear_history':
+        # Réinitialiser la conversation
+        st.session_state.chat_history = [{
+            'role': 'assistant',
+            'content': WELCOME_MESSAGE,
+            'timestamp': datetime.now().strftime("%H:%M"),
+            'type': 'welcome'
+        }]
+        st.session_state.processed_files = set()
+        st.session_state.current_file = None
+        st.session_state.excel_workbook = None
+        st.session_state.extracted_data = None
+        cleanup_temp_files()
+        st.success("✨ Conversation réinitialisée")
         
-        elif action_type == 'process_bpss':
-            asyncio.run(process_bpss(action.get('data')))
+    elif action_type == 'extract_budget':
+        asyncio.run(extract_budget_data())
         
-        elif action_type == 'apply_formulas':
-            apply_excel_formulas()
+    elif action_type == 'process_bpss':
+        asyncio.run(process_bpss(action.get('data')))
         
-        elif action_type == 'extract_budget':
-            asyncio.run(extract_budget_data())
+    elif action_type == 'parse_excel':
+        parse_excel_formulas()
         
-        elif action_type == 'analyze_labels':
-            data = action.get('data')
-            labels = services['json_helper'].extract_labels(data)
-            st.success(f"✅ Analyse terminée : {len(labels)} labels trouvés")
-        
-        elif action_type == 'parse_excel':
-            parse_excel_formulas()
-        
-        elif action_type == 'export_excel':
-            export_excel()
-        
-        elif action_type == 'map_budget_cells':
-            asyncio.run(map_budget_to_cells())
+    elif action_type == 'map_budget_cells':
+        asyncio.run(map_budget_to_cells())
+
+async def extract_budget_data():
+    """Extrait les données budgétaires"""
+    if not st.session_state.current_file:
+        st.error("❌ Aucun fichier chargé")
+        return
+    
+    with st.spinner("Extraction en cours..."):
+        try:
+            content = st.session_state.current_file['content']
+            file_name = st.session_state.current_file['name']
+            
+            # Limiter la taille
+            if len(content) > 10000:
+                content = content[:10000] + "\n\n[... contenu tronqué ...]"
+            
+            # Extraire
+            data = await services['budget_extractor'].extract(
+                content, 
+                services['llm_client']
+            )
+            
+            if data:
+                st.session_state.extracted_data = data
+                st.session_state.excel_tab = 'analysis'
+                
+                # Message de succès
+                st.session_state.chat_history.append({
+                    'role': 'assistant',
+                    'content': f"✅ J'ai extrait **{len(data)} entrées budgétaires** du fichier '{file_name}'.\n\nRendez-vous dans l'onglet 'Extraction' pour visualiser et éditer les données.",
+                    'timestamp': datetime.now().strftime("%H:%M")
+                })
+                st.success(f"✅ {len(data)} entrées extraites!")
+            else:
+                st.warning("⚠️ Aucune donnée budgétaire trouvée")
+                
+        except Exception as e:
+            logger.error(f"Erreur extraction: {str(e)}")
+            st.error(f"❌ Erreur: {str(e)}")
 
 async def process_bpss(data: dict):
-    """Traite les fichiers BPSS avec feedback détaillé"""
+    """Traite les fichiers BPSS"""
     try:
-        # Progress tracking
-        progress_bar = st.progress(0, text="Initialisation BPSS...")
+        progress = st.progress(0, text="Traitement BPSS...")
         
+        # Sauvegarder temporairement
         temp_paths = {}
-        files_info = data['files']
+        for key, file in data['files'].items():
+            with temporary_file(file.getbuffer(), suffix='.xlsx') as path:
+                temp_paths[key] = path
         
-        # Save files temporarily
-        progress_bar.progress(25, text="Sauvegarde des fichiers...")
-        for idx, (key, file) in enumerate(files_info.items()):
-            with temporary_file(file.getbuffer(), suffix='.xlsx') as temp_path:
-                temp_paths[key] = temp_path
+        progress.progress(50, text="Application des données...")
         
-        # Process with BPSS tool
-        progress_bar.progress(50, text="Traitement des données BPSS...")
+        # Traiter
         result_wb = services['bpss_tool'].process_files(
-            ppes_path=temp_paths.get('ppes'),
-            dpp18_path=temp_paths.get('dpp18'),
-            bud45_path=temp_paths.get('bud45'),
+            ppes_path=temp_paths['ppes'],
+            dpp18_path=temp_paths['dpp18'],
+            bud45_path=temp_paths['bud45'],
             year=data['year'],
             ministry_code=data['ministry'],
             program_code=data['program'],
             target_workbook=st.session_state.excel_workbook or openpyxl.Workbook()
         )
         
-        progress_bar.progress(90, text="Finalisation...")
         st.session_state.excel_workbook = result_wb
+        progress.progress(100, text="Terminé!")
         
-        progress_bar.progress(100, text="Terminé!")
-        st.success("✅ Traitement BPSS terminé avec succès!")
-        
-        # Add to chat history
+        # Message de succès
         st.session_state.chat_history.append({
             'role': 'assistant',
-            'content': f"✅ J'ai terminé le traitement BPSS pour l'année {data['year']}, "
-                      f"ministère {data['ministry']}, programme {data['program']}. "
-                      f"Les données ont été intégrées dans votre fichier Excel.",
+            'content': f"✅ Traitement BPSS terminé!\n\nJ'ai intégré les données pour:\n• Année: {data['year']}\n• Ministère: {data['ministry']}\n• Programme: {data['program']}\n\nLes feuilles ont été ajoutées à votre fichier Excel.",
             'timestamp': datetime.now().strftime("%H:%M")
         })
         
+        st.success("✅ Traitement BPSS réussi!")
+        
     except Exception as e:
-        st.error(f"❌ Erreur BPSS: {str(e)}")
-        logger.error(f"Erreur BPSS détaillée: {str(e)}")
-
-async def extract_budget_data():
-    """Extrait les données budgétaires avec UI améliorée"""
-    content = None
-    file_name = None
-    
-    # Find content to extract
-    if st.session_state.get('current_file') and st.session_state.current_file.get('content'):
-        content = st.session_state.current_file['content']
-        file_name = st.session_state.current_file.get('name', 'fichier')
-    else:
-        # Look in history
-        for msg in reversed(st.session_state.chat_history):
-            if msg.get('meta') == 'file_content':
-                content = msg['content']
-                file_name = msg.get('file_name', 'fichier')
-                break
-    
-    if not content:
-        st.error("❌ Aucun fichier chargé pour l'extraction")
-        return
-    
-    # Progress tracking
-    progress_bar = st.progress(0, text="Analyse du contenu...")
-    
-    try:
-        # Limit content size
-        max_content_length = 10000
-        content_to_process = content
-        if len(content) > max_content_length:
-            content_to_process = content[:max_content_length] + "\n\n[... contenu tronqué ...]"
-        
-        progress_bar.progress(50, text="Extraction des données budgétaires...")
-        
-        data = await services['budget_extractor'].extract(
-            content_to_process,
-            services['llm_client']
-        )
-        
-        progress_bar.progress(100, text="Extraction terminée!")
-        
-        if data:
-            st.session_state.extracted_data = data
-            st.success(f"✅ {len(data)} entrées budgétaires extraites!")
-            
-            # Add to chat
-            st.session_state.chat_history.append({
-                'role': 'assistant',
-                'content': f"✅ J'ai extrait {len(data)} entrées budgétaires du fichier '{file_name}'. "
-                          f"Vous pouvez maintenant les visualiser et les éditer dans l'onglet 'Extraction & Analyse'.",
-                'timestamp': datetime.now().strftime("%H:%M")
-            })
-            
-            # Switch to analysis tab - but keep it in the split view
-            st.session_state.excel_tab = 'analysis'
-            # Keep split view to see both Excel and extraction
-            st.session_state.layout_mode = 'split'
-        else:
-            st.warning("⚠️ Aucune donnée budgétaire trouvée")
-            
-    except Exception as e:
-        logger.error(f"Erreur extraction: {str(e)}")
+        logger.error(f"Erreur BPSS: {str(e)}")
         st.error(f"❌ Erreur: {str(e)}")
 
-async def map_budget_to_cells():
-    """Mappe les données budgétaires avec visualisation"""
-    if not st.session_state.extracted_data or not st.session_state.json_data:
-        st.error("❌ Données manquantes pour le mapping")
+def parse_excel_formulas():
+    """Parse les formules Excel"""
+    if not st.session_state.current_file:
+        st.error("❌ Aucun fichier Excel chargé")
         return
     
-    progress_bar = st.progress(0, text="Préparation du mapping...")
+    with st.spinner("Analyse des formules..."):
+        try:
+            with temporary_file(st.session_state.current_file['raw_bytes'], suffix='.xlsx') as path:
+                parser = ExcelFormulaParser()
+                result = parser.parse_excel_file(path, emit_script=True)
+                
+                st.session_state.parsed_formulas = result
+                stats = result['statistics']
+                
+                st.success(f"✅ {stats['success']}/{stats['total']} formules converties")
+                
+        except Exception as e:
+            logger.error(f"Erreur parsing: {str(e)}")
+            st.error(f"❌ Erreur: {str(e)}")
+
+async def map_budget_to_cells():
+    """Mappe les données aux cellules Excel"""
+    if not st.session_state.extracted_data or not st.session_state.json_data:
+        st.error("❌ Données manquantes")
+        return
     
-    try:
-        mapper = services['budget_mapper']
-        tags = services['json_helper'].get_tags_for_mapping(st.session_state.json_data)
-        
-        progress_bar.progress(33, text="Analyse des correspondances...")
-        
-        # Convert to DataFrame if needed
-        if isinstance(st.session_state.extracted_data, list):
-            entries_df = pd.DataFrame(st.session_state.extracted_data)
-        else:
-            entries_df = st.session_state.extracted_data
-        
-        # Map entries to cells
-        progress_bar.progress(66, text="Mapping intelligent en cours...")
-        
-        mapping = await mapper.map_entries_to_cells(
-            st.session_state.extracted_data,
-            tags
-        )
-        
-        if mapping:
-            progress_bar.progress(100, text="Mapping terminé!")
-            st.success(f"✅ {len(mapping)} correspondances trouvées")
+    with st.spinner("Mapping en cours..."):
+        try:
+            mapper = services['budget_mapper']
+            tags = services['json_helper'].get_tags_for_mapping(st.session_state.json_data)
             
-            # Apply to workbook
-            if st.session_state.excel_workbook:
+            # Mapper
+            mapping = await mapper.map_entries_to_cells(
+                st.session_state.extracted_data,
+                tags
+            )
+            
+            if mapping and st.session_state.excel_workbook:
+                # Appliquer
+                entries_df = pd.DataFrame(st.session_state.extracted_data)
                 success, errors = mapper.apply_mapping_to_excel(
                     st.session_state.excel_workbook,
                     mapping,
@@ -475,72 +438,19 @@ async def map_budget_to_cells():
                 if success > 0:
                     st.success(f"✅ {success} cellules mises à jour")
                 if errors:
-                    with st.expander("⚠️ Erreurs rencontrées"):
+                    with st.expander("⚠️ Erreurs"):
                         for error in errors:
                             st.warning(error)
-        else:
-            st.warning("⚠️ Aucun mapping trouvé")
-            
-    except Exception as e:
-        logger.error(f"Erreur mapping: {str(e)}")
-        st.error(f"❌ Erreur: {str(e)}")
+                            
+        except Exception as e:
+            logger.error(f"Erreur mapping: {str(e)}")
+            st.error(f"❌ Erreur: {str(e)}")
 
-def parse_excel_formulas():
-    """Parse les formules Excel avec visualisation détaillée"""
-    if not st.session_state.excel_workbook or not st.session_state.current_file:
-        st.error("❌ Aucun fichier Excel chargé")
-        return
-    
-    progress_bar = st.progress(0, text="Analyse des formules Excel...")
-    
-    try:
-        # Save file temporarily
-        with temporary_file(st.session_state.current_file.get('raw_bytes', b''), suffix='.xlsx') as temp_path:
-            progress_bar.progress(50, text="Parsing des formules...")
-            
-            parser = ExcelFormulaParser()
-            result = parser.parse_excel_file(temp_path, emit_script=True)
-            
-            st.session_state.parsed_formulas = result
-            st.session_state.excel_script = result.get('script_file')
-            
-            progress_bar.progress(100, text="Analyse terminée!")
-            
-            stats = result['statistics']
-            st.success(f"✅ {stats['success']}/{stats['total']} formules converties ({stats['success_rate']}%)")
-            
-            # Switch to formulas tab
-            st.session_state.excel_tab = 'formulas'
-            
-    except Exception as e:
-        logger.error(f"Erreur parsing: {str(e)}")
-        st.error(f"❌ Erreur: {str(e)}")
-
-def export_excel():
-    """Exporte le fichier Excel avec nom intelligent"""
-    if not st.session_state.excel_workbook:
-        st.error("❌ Aucun fichier Excel à exporter")
-        return
-    
-    output = services['excel_handler'].save_workbook_to_bytes(st.session_state.excel_workbook)
-    
-    # Generate intelligent filename
-    base_name = "budgibot_export"
-    if st.session_state.current_file:
-        base_name = Path(st.session_state.current_file['name']).stem + "_processed"
-    
-    filename = f"{base_name}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx"
-    
-    st.download_button(
-        label="📥 Télécharger Excel",
-        data=output,
-        file_name=filename,
-        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        use_container_width=True
-    )
+# Initialisation des services
+services = init_services()
 
 def main():
-    """Fonction principale avec UI moderne"""
+    """Fonction principale"""
     # Initialiser l'état
     init_session_state()
     
@@ -549,26 +459,27 @@ def main():
         cleanup_temp_files()
         st.session_state.startup_cleanup = True
     
-    # Gérer les messages en attente
-    if st.session_state.is_typing and len(st.session_state.chat_history) > 0:
+    # Traiter les messages/fichiers en attente
+    if st.session_state.is_typing and st.session_state.chat_history:
         last_msg = st.session_state.chat_history[-1]
-        if last_msg['role'] == 'user' and not last_msg['content'].startswith("📎"):
-            # Message texte à traiter
-            asyncio.run(process_message())
-        elif last_msg['role'] == 'user' and last_msg['content'].startswith("📎"):
-            # Fichier à traiter
-            file_key = last_msg.get('file_key')
-            if file_key:
-                # Chercher le fichier
-                for key in ['file_upload_drop', 'file_upload_chat_modern']:
-                    file_to_process = st.session_state.get(key)
-                    if file_to_process:
-                        current_file_key = f"{file_to_process.name}_{file_to_process.size}"
-                        if current_file_key == file_key:
-                            asyncio.run(process_file(file_to_process))
-                            break
+        
+        if last_msg['role'] == 'user':
+            if last_msg['content'].startswith("📎"):
+                # Fichier à traiter
+                file_key = last_msg.get('file_key')
+                if file_key:
+                    # Chercher le fichier dans les widgets
+                    for widget_key in st.session_state:
+                        if widget_key.startswith('file_upload_'):
+                            file = st.session_state.get(widget_key)
+                            if file and f"{file.name}_{file.size}" == file_key:
+                                asyncio.run(process_file(file))
+                                break
+            else:
+                # Message texte
+                asyncio.run(process_message())
     
-    # Gérer les actions en attente
+    # Traiter les actions en attente
     if st.session_state.get('pending_action'):
         action = st.session_state.pending_action
         st.session_state.pending_action = None
@@ -576,10 +487,8 @@ def main():
         if action['type'] == 'extract_budget':
             asyncio.run(extract_budget_data())
     
-    # Créer le layout moderne
+    # Créer et rendre l'interface
     layout = MainLayout(services)
-    
-    # Rendre l'interface
     layout.render(
         on_message_send=lambda msg: asyncio.run(handle_message_send(msg)),
         on_file_upload=lambda file: asyncio.run(handle_file_upload(file)),
