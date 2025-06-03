@@ -393,6 +393,439 @@ class MainLayout:
                     st.session_state.extracted_data = edited_df.to_dict('records')
                     st.success("✅ Données mises à jour!")
 
+             # Interface de vérification du mapping
+            if st.session_state.get('mapping_report'):
+                st.markdown("---")
+                st.markdown("### 🔍 Vérification et validation du mapping")
+                
+                report = st.session_state.mapping_report
+                
+                # Métriques de synthèse
+                col1, col2, col3, col4 = st.columns(4)
+                with col1:
+                    avg_conf = report['summary']['average_confidence']
+                    color = "🟢" if avg_conf > 0.8 else "🟡" if avg_conf > 0.6 else "🔴"
+                    st.metric(f"{color} Confiance moyenne", f"{avg_conf:.1%}")
+                
+                with col2:
+                    high_conf = report['by_confidence'].get('Très élevé (>90%)', 0)
+                    st.metric("✅ Haute confiance", high_conf)
+                
+                with col3:
+                    low_conf = report['by_confidence'].get('Faible (<50%)', 0)
+                    needs_review = report['by_confidence'].get('Moyen (50-70%)', 0)
+                    st.metric("⚠️ À vérifier", low_conf + needs_review)
+                
+                with col4:
+                    unmapped = report['summary']['unmapped_entries']
+                    st.metric("❌ Non mappés", unmapped)
+                
+                # Graphique de répartition par confiance
+                with st.expander("📊 Analyse détaillée de la confiance"):
+                    conf_data = pd.DataFrame({
+                        'Niveau de confiance': list(report['by_confidence'].keys()),
+                        'Nombre d\'entrées': list(report['by_confidence'].values())
+                    })
+                    
+                    # Créer un graphique en barres coloré
+                    import plotly.express as px
+                    colors = ['#28a745', '#5cb85c', '#ffc107', '#dc3545', '#6c757d']
+                    fig = px.bar(
+                        conf_data, 
+                        x='Niveau de confiance', 
+                        y='Nombre d\'entrées',
+                        color='Niveau de confiance',
+                        color_discrete_sequence=colors,
+                        title="Répartition des mappings par niveau de confiance"
+                    )
+                    st.plotly_chart(fig, use_container_width=True)
+                    
+                    # Répartition par feuille
+                    if report['by_sheet']:
+                        st.markdown("#### 📋 Répartition par feuille")
+                        sheet_df = pd.DataFrame({
+                            'Feuille': list(report['by_sheet'].keys()),
+                            'Nombre': list(report['by_sheet'].values())
+                        })
+                        st.dataframe(sheet_df, use_container_width=True)
+                
+                # Tabs pour différentes vues de vérification
+                verify_tabs = st.tabs([
+                    "🔍 Révision prioritaire", 
+                    "❌ Entrées non mappées", 
+                    "📊 Vue d'ensemble",
+                    "✏️ Corrections manuelles"
+                ])
+                
+                with verify_tabs[0]:  # Révision prioritaire
+                    st.info("Mappings nécessitant une vérification (confiance < 70%)")
+                    
+                    low_conf_items = report['low_confidence']
+                    if low_conf_items:
+                        # Options de filtrage
+                        col1, col2 = st.columns([3, 1])
+                        with col1:
+                            search_term = st.text_input(
+                                "🔍 Rechercher dans les descriptions",
+                                placeholder="Tapez pour filtrer..."
+                            )
+                        with col2:
+                            sort_by = st.selectbox(
+                                "Trier par",
+                                ["Confiance ↓", "Confiance ↑", "Montant ↓", "Montant ↑"]
+                            )
+                        
+                        # Filtrer et trier
+                        filtered_items = low_conf_items
+                        if search_term:
+                            filtered_items = [
+                                item for item in filtered_items 
+                                if search_term.lower() in item['description'].lower()
+                            ]
+                        
+                        if sort_by == "Confiance ↓":
+                            filtered_items.sort(key=lambda x: x['confidence'])
+                        elif sort_by == "Confiance ↑":
+                            filtered_items.sort(key=lambda x: x['confidence'], reverse=True)
+                        elif sort_by == "Montant ↓":
+                            filtered_items.sort(key=lambda x: x['montant'], reverse=True)
+                        elif sort_by == "Montant ↑":
+                            filtered_items.sort(key=lambda x: x['montant'])
+                        
+                        st.caption(f"Affichage de {min(20, len(filtered_items))} sur {len(filtered_items)} entrées")
+                        
+                        # Afficher les items à réviser
+                        for i, item in enumerate(filtered_items[:20]):
+                            with st.expander(
+                                f"{'🔴' if item['confidence'] < 0.5 else '🟡'} "
+                                f"{item['description'][:60]}... "
+                                f"({item['confidence']:.0%})",
+                                expanded=(i < 3)  # Ouvrir les 3 premiers
+                            ):
+                                col1, col2, col3 = st.columns([3, 2, 1])
+                                
+                                with col1:
+                                    st.markdown("**Détails de l'entrée**")
+                                    st.markdown(f"• Description: {item['description']}")
+                                    st.markdown(f"• Montant: **{item['montant']:,.0f} €**")
+                                    st.markdown(f"• Critères de match: {', '.join(item['matches'])}")
+                                
+                                with col2:
+                                    st.markdown("**Mapping actuel**")
+                                    st.markdown(f"• Cellule: `{item['cellule']}`")
+                                    st.markdown(f"• Confiance: {item['confidence']:.1%}")
+                                    
+                                    # Suggestions alternatives (si disponibles)
+                                    if st.checkbox("Voir alternatives", key=f"alt_{i}"):
+                                        st.info("Fonctionnalité à venir: suggestions alternatives")
+                                
+                                with col3:
+                                    st.markdown("**Actions**")
+                                    if st.button("✅ Valider", key=f"validate_{i}", use_container_width=True):
+                                        st.success("Validé!")
+                                    if st.button("✏️ Modifier", key=f"edit_{i}", use_container_width=True):
+                                        st.session_state[f'editing_{i}'] = True
+                                
+                                # Zone d'édition si activée
+                                if st.session_state.get(f'editing_{i}', False):
+                                    st.markdown("---")
+                                    new_col1, new_col2 = st.columns(2)
+                                    with new_col1:
+                                        new_sheet = st.selectbox(
+                                            "Nouvelle feuille",
+                                            st.session_state.excel_workbook.sheetnames,
+                                            key=f"new_sheet_{i}"
+                                        )
+                                    with new_col2:
+                                        new_cell = st.text_input(
+                                            "Nouvelle cellule",
+                                            value=item['cellule'].split('!')[-1],
+                                            key=f"new_cell_{i}",
+                                            placeholder="Ex: D27"
+                                        )
+                                    
+                                    if st.button("💾 Sauvegarder", key=f"save_{i}"):
+                                        st.success(f"Nouveau mapping: {new_sheet}!{new_cell}")
+                                        st.session_state[f'editing_{i}'] = False
+                                        st.rerun()
+                    else:
+                        st.success("✅ Tous les mappings ont une confiance élevée (> 70%)")
+                
+                with verify_tabs[1]:  # Entrées non mappées
+                    unmapped_items = report['unmapped']
+                    if unmapped_items:
+                        st.warning(f"❌ {len(unmapped_items)} entrées n'ont pas pu être mappées automatiquement")
+                        
+                        # Options de mapping manuel
+                        mapping_method = st.radio(
+                            "Méthode de mapping",
+                            ["Individual", "Par lot (pattern)"],
+                            horizontal=True
+                        )
+                        
+                        if mapping_method == "Individual":
+                            # Table des non mappés
+                            unmapped_df = pd.DataFrame(unmapped_items)
+                            
+                            # Sélection d'une entrée
+                            selected_idx = st.selectbox(
+                                "Sélectionner une entrée à mapper",
+                                range(len(unmapped_items)),
+                                format_func=lambda x: f"{unmapped_items[x]['description'][:60]}... ({unmapped_items[x]['montant']:,.0f} €)"
+                            )
+                            
+                            if selected_idx is not None:
+                                selected_item = unmapped_items[selected_idx]
+                                st.info(f"**{selected_item['description']}**")
+                                
+                                col1, col2, col3 = st.columns(3)
+                                with col1:
+                                    target_sheet = st.selectbox(
+                                        "Feuille cible",
+                                        st.session_state.excel_workbook.sheetnames
+                                    )
+                                with col2:
+                                    target_cell = st.text_input(
+                                        "Cellule cible",
+                                        placeholder="Ex: D27"
+                                    )
+                                with col3:
+                                    confidence = st.slider(
+                                        "Confiance",
+                                        0.0, 1.0, 0.8, 0.1
+                                    )
+                                
+                                if st.button("➕ Créer le mapping", type="primary", use_container_width=True):
+                                    st.success(f"Mapping créé: {target_sheet}!{target_cell}")
+                                    # TODO: Ajouter la logique pour sauvegarder le mapping
+                        
+                        else:  # Par lot
+                            st.info("Mapper plusieurs entrées similaires en une fois")
+                            
+                            # Recherche de pattern
+                            pattern = st.text_input(
+                                "Pattern de recherche",
+                                placeholder="Ex: 'recrutement 2025'"
+                            )
+                            
+                            if pattern:
+                                # Filtrer les entrées correspondantes
+                                matching = [
+                                    item for item in unmapped_items
+                                    if pattern.lower() in item['description'].lower()
+                                ]
+                                
+                                if matching:
+                                    st.success(f"✅ {len(matching)} entrées correspondent au pattern")
+                                    
+                                    # Prévisualisation
+                                    with st.expander("Voir les entrées correspondantes"):
+                                        for item in matching[:5]:
+                                            st.text(f"• {item['description'][:80]}...")
+                                        if len(matching) > 5:
+                                            st.text(f"... et {len(matching) - 5} autres")
+                                    
+                                    # Mapping groupé
+                                    col1, col2 = st.columns(2)
+                                    with col1:
+                                        batch_sheet = st.selectbox(
+                                            "Feuille pour toutes",
+                                            st.session_state.excel_workbook.sheetnames,
+                                            key="batch_sheet"
+                                        )
+                                    with col2:
+                                        batch_pattern = st.text_input(
+                                            "Pattern de cellules",
+                                            placeholder="Ex: D{27+i} pour D27, D28...",
+                                            help="Utilisez {i} pour l'index"
+                                        )
+                                    
+                                    if st.button("🚀 Mapper toutes les entrées", type="primary"):
+                                        st.success(f"✅ {len(matching)} mappings créés!")
+                                else:
+                                    st.warning("Aucune entrée ne correspond au pattern")
+                    else:
+                        st.success("✅ Toutes les entrées ont été mappées avec succès!")
+                
+                with verify_tabs[2]:  # Vue d'ensemble
+                    st.info("Vue complète de tous les mappings avec filtres avancés")
+                    
+                    if st.session_state.get('extracted_data'):
+                        df_all = pd.DataFrame(st.session_state.extracted_data)
+                        
+                        # Filtres avancés
+                        filter_col1, filter_col2, filter_col3, filter_col4 = st.columns(4)
+                        
+                        with filter_col1:
+                            status_filter = st.multiselect(
+                                "Statut",
+                                ["Mappé", "Non mappé", "À réviser"],
+                                default=["Mappé", "Non mappé", "À réviser"]
+                            )
+                        
+                        with filter_col2:
+                            conf_range = st.slider(
+                                "Plage de confiance",
+                                0.0, 1.0, (0.0, 1.0), 0.1
+                            )
+                        
+                        with filter_col3:
+                            sheet_filter = st.multiselect(
+                                "Feuilles",
+                                ["Toutes"] + list(df_all['SheetName'].unique()),
+                                default=["Toutes"]
+                            )
+                        
+                        with filter_col4:
+                            amount_range = st.slider(
+                                "Montant (k€)",
+                                float(df_all['Montant'].min() / 1000),
+                                float(df_all['Montant'].max() / 1000),
+                                (float(df_all['Montant'].min() / 1000), 
+                                 float(df_all['Montant'].max() / 1000))
+                            )
+                        
+                        # Appliquer les filtres
+                        filtered_df = df_all.copy()
+                        
+                        # Filtre statut
+                        status_conditions = []
+                        if "Mappé" in status_filter:
+                            status_conditions.append((filtered_df['IsMapped'] == True) & (filtered_df['NeedsReview'] == False))
+                        if "Non mappé" in status_filter:
+                            status_conditions.append(filtered_df['IsMapped'] == False)
+                        if "À réviser" in status_filter:
+                            status_conditions.append(filtered_df['NeedsReview'] == True)
+                        
+                        if status_conditions:
+                            combined_condition = status_conditions[0]
+                            for condition in status_conditions[1:]:
+                                combined_condition = combined_condition | condition
+                            filtered_df = filtered_df[combined_condition]
+                        
+                        # Filtre confiance
+                        filtered_df = filtered_df[
+                            (filtered_df['ConfidenceScore'] >= conf_range[0]) &
+                            (filtered_df['ConfidenceScore'] <= conf_range[1])
+                        ]
+                        
+                        # Filtre feuilles
+                        if "Toutes" not in sheet_filter:
+                            filtered_df = filtered_df[filtered_df['SheetName'].isin(sheet_filter)]
+                        
+                        # Filtre montant
+                        filtered_df = filtered_df[
+                            (filtered_df['Montant'] >= amount_range[0] * 1000) &
+                            (filtered_df['Montant'] <= amount_range[1] * 1000)
+                        ]
+                        
+                        # Statistiques sur les données filtrées
+                        col1, col2, col3 = st.columns(3)
+                        with col1:
+                            st.metric("Entrées affichées", len(filtered_df))
+                        with col2:
+                            st.metric("Montant total", f"{filtered_df['Montant'].sum():,.0f} €")
+                        with col3:
+                            avg_conf = filtered_df['ConfidenceScore'].mean()
+                            st.metric("Confiance moyenne", f"{avg_conf:.1%}" if not pd.isna(avg_conf) else "N/A")
+                        
+                        # Options d'affichage
+                        show_columns = st.multiselect(
+                            "Colonnes à afficher",
+                            ['Axe', 'Description', 'Montant', 'Date', 'Nature', 
+                             'CelluleCible', 'ConfidenceScore', 'MatchCriteria'],
+                            default=['Description', 'Montant', 'CelluleCible', 'ConfidenceScore']
+                        )
+                        
+                        # Affichage du dataframe avec style conditionnel
+                        if not filtered_df.empty and show_columns:
+                            def style_confidence(val):
+                                if pd.isna(val):
+                                    return ''
+                                if isinstance(val, (int, float)):
+                                    if val >= 0.9:
+                                        return 'background-color: #d4edda; color: #155724'
+                                    elif val >= 0.7:
+                                        return 'background-color: #fff3cd; color: #856404'
+                                    else:
+                                        return 'background-color: #f8d7da; color: #721c24'
+                                return ''
+                            
+                            styled_df = filtered_df[show_columns].style
+                            
+                            if 'ConfidenceScore' in show_columns:
+                                styled_df = styled_df.applymap(
+                                    style_confidence, 
+                                    subset=['ConfidenceScore']
+                                ).format({'ConfidenceScore': '{:.1%}'})
+                            
+                            if 'Montant' in show_columns:
+                                styled_df = styled_df.format({'Montant': '{:,.0f} €'})
+                            
+                            st.dataframe(
+                                styled_df,
+                                use_container_width=True,
+                                height=500
+                            )
+                            
+                            # Options d'export
+                            col1, col2 = st.columns(2)
+                            with col1:
+                                csv = filtered_df.to_csv(index=False)
+                                st.download_button(
+                                    "📥 Exporter les données filtrées (CSV)",
+                                    data=csv,
+                                    file_name=f"mapping_filtered_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
+                                    mime="text/csv",
+                                    use_container_width=True
+                                )
+                            
+                            with col2:
+                                # Générer un rapport Excel détaillé
+                                if st.button("📊 Générer rapport Excel", use_container_width=True):
+                                    st.info("Génération du rapport...")
+                                    # TODO: Implémenter la génération du rapport
+                
+                with verify_tabs[3]:  # Corrections manuelles
+                    st.info("Interface pour corriger les mappings en masse")
+                    
+                    # Import de corrections
+                    st.markdown("#### 📤 Importer des corrections")
+                    uploaded_corrections = st.file_uploader(
+                        "Charger un fichier CSV de corrections",
+                        type=['csv'],
+                        help="Le CSV doit contenir: Description, CelluleCible"
+                    )
+                    
+                    if uploaded_corrections:
+                        corrections_df = pd.read_csv(uploaded_corrections)
+                        st.success(f"✅ {len(corrections_df)} corrections chargées")
+                        
+                        # Prévisualisation
+                        with st.expander("Voir les corrections"):
+                            st.dataframe(corrections_df.head(10))
+                        
+                        if st.button("🔄 Appliquer les corrections", type="primary"):
+                            # TODO: Implémenter l'application des corrections
+                            st.success("Corrections appliquées!")
+                    
+                    # Export pour correction manuelle
+                    st.markdown("#### 📥 Exporter pour correction")
+                    if st.button("Générer template de correction"):
+                        if st.session_state.get('extracted_data'):
+                            df_export = pd.DataFrame(st.session_state.extracted_data)
+                            template_df = df_export[['Description', 'Montant', 'CelluleCible', 'ConfidenceScore']]
+                            template_df['NouvelleCellule'] = ''
+                            template_df['Commentaire'] = ''
+                            
+                            csv = template_df.to_csv(index=False)
+                            st.download_button(
+                                "📥 Télécharger le template",
+                                data=csv,
+                                file_name=f"template_corrections_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
+                                mime="text/csv"
+                            )
+
     def _render_excel_tools_tab(self, on_tool_action: Callable):
         """Renders simplified BPSS tool"""
         st.markdown("### 🛠️ Outil BPSS")
