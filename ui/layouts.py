@@ -59,41 +59,38 @@ class MainLayout:
     def _render_top_navbar(self):
         """Renders modern top navigation bar"""
         # Get logo first
-        logo_base64 = self._get_logo_base64() or ""
+        logo_base64 = self._get_logo_base64()
         
-        # Build navbar HTML with Unicode icons instead of SVG
-        navbar_html = f"""
-        <div class="top-navbar">
-            <div class="navbar-content">
-                <div class="navbar-brand">
-                    {'<img src="data:image/png;base64,' + logo_base64 + '" class="navbar-logo" alt="BudgiBot">' if logo_base64 else '<div class="navbar-logo-placeholder">🤖</div>'}
-                    <span class="navbar-title">BudgiBot</span>
-                    <span class="navbar-subtitle">Assistant Budgétaire Intelligent</span>
-                </div>
-                
-                <div class="navbar-controls">
-                    <div class="layout-switcher">
-                        <button class="layout-btn" data-layout="chat" title="Vue Chat">
-                            <span class="layout-icon">💬</span>
-                        </button>
-                        <button class="layout-btn active" data-layout="split" title="Vue Partagée">
-                            <span class="layout-icon">⚡</span>
-                        </button>
-                        <button class="layout-btn" data-layout="excel" title="Vue Excel">
-                            <span class="layout-icon">📊</span>
-                        </button>
-                    </div>
-                    
-                    <div class="navbar-actions">
-                        <button class="nav-action-btn" id="notifications-btn">
-                            <span class="nav-icon">🔔</span>
-                            <span class="notification-badge">2</span>
-                        </button>
-                    </div>
-                </div>
+        # Build logo element
+        logo_element = '<div class="navbar-logo-placeholder">🤖</div>'
+        if logo_base64:
+            logo_element = f'<img src="data:image/png;base64,{logo_base64}" class="navbar-logo" alt="BudgiBot" />'
+        
+        # Build complete navbar - simplified without unused buttons
+        navbar_html = f'''
+<div class="top-navbar">
+    <div class="navbar-content">
+        <div class="navbar-brand">
+            {logo_element}
+            <span class="navbar-title">BudgiBot</span>
+            <span class="navbar-subtitle">Assistant Budgétaire Intelligent</span>
+        </div>
+        <div class="navbar-controls">
+            <div class="layout-switcher">
+                <button class="layout-btn" data-layout="chat" title="Vue Chat">
+                    <span class="layout-icon">💬</span>
+                </button>
+                <button class="layout-btn active" data-layout="split" title="Vue Partagée">
+                    <span class="layout-icon">⚡</span>
+                </button>
+                <button class="layout-btn" data-layout="excel" title="Vue Excel">
+                    <span class="layout-icon">📊</span>
+                </button>
             </div>
         </div>
-        """
+    </div>
+</div>
+'''
         
         st.markdown(navbar_html, unsafe_allow_html=True)
         
@@ -160,9 +157,9 @@ class MainLayout:
             <h3>📊 Espace Excel</h3>
             <div class="excel-tabs">
                 <button class="excel-tab active" data-tab="data">Données</button>
+                <button class="excel-tab" data-tab="analysis">Extraction & Analyse</button>
                 <button class="excel-tab" data-tab="formulas">Formules</button>
-                <button class="excel-tab" data-tab="analysis">Analyse</button>
-                <button class="excel-tab" data-tab="tools">Outils</button>
+                <button class="excel-tab" data-tab="tools">Outil BPSS</button>
             </div>
         </div>
         """, unsafe_allow_html=True)
@@ -349,6 +346,54 @@ class MainLayout:
     
     def _render_excel_analysis_tab(self, on_tool_action: Callable):
         """Renders Excel analysis tab"""
+        # Split the view - Excel data on top, analysis below
+        if st.session_state.get('excel_workbook'):
+            # Show current Excel data (read-only view)
+            wb = st.session_state.excel_workbook
+            sheets = wb.sheetnames
+            
+            with st.expander("📊 Données Excel actuelles", expanded=False):
+                selected_sheet = st.selectbox(
+                    "Feuille à visualiser",
+                    sheets,
+                    key="sheet_selector_analysis"
+                )
+                
+                if selected_sheet:
+                    try:
+                        df = self.services['excel_handler'].sheet_to_dataframe(wb, selected_sheet)
+                        st.dataframe(df, use_container_width=True, height=200)
+                    except Exception as e:
+                        st.error(f"Erreur affichage: {str(e)}")
+        
+        # JSON upload section
+        st.markdown("### 📄 Configuration JSON")
+        json_col1, json_col2 = st.columns([3, 1])
+        
+        with json_col1:
+            json_file = st.file_uploader(
+                "Charger le fichier JSON de configuration", 
+                type=['json'], 
+                key="json_analysis",
+                help="Le fichier JSON contient les tags et labels pour le mapping"
+            )
+        
+        if json_file:
+            import json
+            try:
+                data = json.load(json_file)
+                st.session_state.json_data = data
+                
+                labels = self.services['json_helper'].extract_labels(data)
+                
+                with json_col2:
+                    st.success(f"✅ {len(labels)} labels")
+                
+            except Exception as e:
+                st.error(f"Erreur JSON: {str(e)}")
+        
+        # Extraction buttons
+        st.markdown("### 🎯 Actions d'extraction")
         col1, col2 = st.columns(2)
         
         with col1:
@@ -367,16 +412,19 @@ class MainLayout:
             st.markdown("### 💰 Données budgétaires extraites")
             
             df = pd.DataFrame(st.session_state.extracted_data)
+            
+            # Show editable data
             edited_df = st.data_editor(
                 df,
                 use_container_width=True,
                 num_rows="dynamic",
-                height=300
+                height=300,
+                key="budget_data_editor"
             )
             
-            col1, col2 = st.columns(2)
+            col1, col2, col3 = st.columns(3)
             with col1:
-                if st.button("💾 Sauvegarder", use_container_width=True):
+                if st.button("💾 Sauvegarder les modifications", use_container_width=True):
                     st.session_state.extracted_data = edited_df.to_dict('records')
                     st.success("Données sauvegardées!")
             
@@ -389,11 +437,18 @@ class MainLayout:
                     mime="text/csv",
                     use_container_width=True
                 )
+            
+            with col3:
+                if st.session_state.get('excel_workbook') and st.session_state.get('json_data'):
+                    if st.button("➡️ Appliquer à Excel", use_container_width=True, type="primary"):
+                        on_tool_action({'action': 'map_budget_cells'})
     
     def _render_excel_tools_tab(self, on_tool_action: Callable):
         """Renders Excel tools tab"""
-        # BPSS Tool
-        st.markdown("### 🛠️ Outil BPSS")
+        # BPSS Tool only
+        st.markdown("### 🛠️ Outil BPSS - Mesures Catégorielles")
+        st.info("Cet outil permet de traiter automatiquement les fichiers PP-E-S, DPP18 et BUD45 pour les intégrer dans votre fichier Excel.")
+        
         with st.form("bpss_form_excel"):
             col1, col2, col3 = st.columns(3)
             with col1:
@@ -406,13 +461,13 @@ class MainLayout:
             st.markdown("#### 📁 Fichiers requis")
             col1, col2, col3 = st.columns(3)
             with col1:
-                ppes = st.file_uploader("PP‑E‑S", type=['xlsx'], key="bpss_ppes_excel")
+                ppes = st.file_uploader("PP‑E‑S (.xlsx)", type=['xlsx'], key="bpss_ppes_excel")
             with col2:
-                dpp18 = st.file_uploader("DPP 18", type=['xlsx'], key="bpss_dpp18_excel")
+                dpp18 = st.file_uploader("DPP18 (.xlsx)", type=['xlsx'], key="bpss_dpp18_excel")
             with col3:
-                bud45 = st.file_uploader("BUD 45", type=['xlsx'], key="bpss_bud45_excel")
+                bud45 = st.file_uploader("BUD45 (.xlsx)", type=['xlsx'], key="bpss_bud45_excel")
             
-            if st.form_submit_button("🚀 Lancer BPSS", use_container_width=True, type="primary"):
+            if st.form_submit_button("🚀 Lancer le traitement BPSS", use_container_width=True, type="primary"):
                 if all([ppes, dpp18, bud45]):
                     on_tool_action({
                         'action': 'process_bpss',
@@ -428,51 +483,29 @@ class MainLayout:
                         }
                     })
                 else:
-                    st.error("Veuillez charger tous les fichiers requis")
-        
-        # JSON Helper
-        st.markdown("### 📄 Configuration JSON")
-        json_file = st.file_uploader("Charger JSON", type=['json'], key="json_excel")
-        if json_file:
-            import json
-            try:
-                data = json.load(json_file)
-                st.session_state.json_data = data
-                
-                labels = self.services['json_helper'].extract_labels(data)
-                st.success(f"✅ {len(labels)} labels trouvés")
-                
-                if st.button("🔍 Analyser labels", use_container_width=True):
-                    on_tool_action({'action': 'analyze_labels', 'data': data})
-                    
-            except Exception as e:
-                st.error(f"Erreur JSON: {str(e)}")
+                    st.error("⚠️ Veuillez charger tous les fichiers requis (PP-E-S, DPP18 et BUD45)")
     
     def _render_chat_header(self):
         """Renders modern chat header"""
         logo_base64 = self._get_logo_base64()
-        header_html = f"""
-        <div class="modern-chat-header">
-            <div class="chat-header-content">
-                {'<img src="data:image/png;base64,' + logo_base64 + '" class="chat-logo" alt="BudgiBot">' if logo_base64 else '<div class="chat-logo-placeholder">🤖</div>'}
-                <div class="chat-header-info">
-                    <h3>Assistant BudgiBot</h3>
-                    <span class="chat-status">
-                        <span class="status-indicator"></span>
-                        En ligne • Prêt à vous aider
-                    </span>
-                </div>
-            </div>
-            <div class="chat-header-actions">
-                <button class="header-action-btn" title="Historique">
-                    <span class="header-icon">📚</span>
-                </button>
-                <button class="header-action-btn" title="Paramètres">
-                    <span class="header-icon">⚙️</span>
-                </button>
-            </div>
+        logo_element = '<div class="chat-logo-placeholder">🤖</div>'
+        if logo_base64:
+            logo_element = f'<img src="data:image/png;base64,{logo_base64}" class="chat-logo" alt="BudgiBot" />'
+        
+        header_html = f'''
+<div class="modern-chat-header">
+    <div class="chat-header-content">
+        {logo_element}
+        <div class="chat-header-info">
+            <h3>Assistant BudgiBot</h3>
+            <span class="chat-status">
+                <span class="status-indicator"></span>
+                En ligne • Prêt à vous aider
+            </span>
         </div>
-        """
+    </div>
+</div>
+'''
         st.markdown(header_html, unsafe_allow_html=True)
     
     def _render_chat_input(self, on_message_send: Callable, on_file_upload: Callable):
@@ -498,12 +531,8 @@ class MainLayout:
             )
         
         with col3:
-            # Voice input button (placeholder)
-            st.markdown("""
-            <button class="voice-input-btn" title="Entrée vocale">
-                <span class="voice-icon">🎤</span>
-            </button>
-            """, unsafe_allow_html=True)
+            # Voice input button removed - not functional
+            st.empty()
         
         st.markdown('</div>', unsafe_allow_html=True)
         
@@ -524,9 +553,6 @@ class MainLayout:
             <button class="fab fab-primary" id="quick-extract" title="Extraction rapide">
                 <span class="fab-icon">📄</span>
             </button>
-            <button class="fab fab-secondary" id="new-chat" title="Nouvelle conversation">
-                <span class="fab-icon">➕</span>
-            </button>
         </div>
         
         <script>
@@ -535,13 +561,6 @@ class MainLayout:
                 // Trigger extract budget action
                 const btn = document.querySelector('button[title*="Extraire"]');
                 if (btn) btn.click();
-            });
-            
-            document.getElementById('new-chat')?.addEventListener('click', function() {
-                // Clear chat history
-                if (confirm('Commencer une nouvelle conversation ?')) {
-                    window.location.reload();
-                }
             });
         });
         </script>

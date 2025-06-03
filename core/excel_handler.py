@@ -4,6 +4,8 @@ import pandas as pd
 from io import BytesIO
 from typing import Optional, Union, Dict, Any
 import logging
+import tempfile
+import os
 
 logger = logging.getLogger(__name__)
 
@@ -13,11 +15,18 @@ class ExcelHandler:
     def __init__(self):
         self.current_workbook = None
         self.current_path = None
+        self.temp_files = []
     
     def load_workbook(self, file_path: str) -> openpyxl.Workbook:
         """Charge un workbook depuis un fichier"""
         try:
-            wb = openpyxl.load_workbook(file_path, data_only=False, keep_vba=True)
+            # Keep images and VBA
+            wb = openpyxl.load_workbook(
+                file_path, 
+                data_only=False, 
+                keep_vba=True,
+                keep_links=False  # Disable external links
+            )
             self.current_workbook = wb
             self.current_path = file_path
             logger.info(f"Workbook chargé: {file_path}")
@@ -29,9 +38,23 @@ class ExcelHandler:
     def load_workbook_from_bytes(self, file_bytes: bytes) -> openpyxl.Workbook:
         """Charge un workbook depuis des bytes"""
         try:
-            wb = openpyxl.load_workbook(BytesIO(file_bytes), data_only=False, keep_vba=True)
+            # Save bytes to temporary file to keep file reference
+            with tempfile.NamedTemporaryFile(delete=False, suffix='.xlsx') as tmp_file:
+                tmp_file.write(file_bytes)
+                temp_path = tmp_file.name
+            
+            self.temp_files.append(temp_path)
+            
+            # Load from temp file
+            wb = openpyxl.load_workbook(
+                temp_path,
+                data_only=False,
+                keep_vba=True,
+                keep_links=False
+            )
             self.current_workbook = wb
-            logger.info("Workbook chargé depuis bytes")
+            self.current_path = temp_path
+            logger.info("Workbook chargé depuis bytes via fichier temporaire")
             return wb
         except Exception as e:
             logger.error(f"Erreur chargement workbook depuis bytes: {str(e)}")
@@ -39,10 +62,56 @@ class ExcelHandler:
     
     def save_workbook_to_bytes(self, workbook: openpyxl.Workbook) -> bytes:
         """Sauvegarde un workbook en bytes"""
-        output = BytesIO()
-        workbook.save(output)
-        output.seek(0)
-        return output.getvalue()
+        try:
+            # Create a new BytesIO object
+            output = BytesIO()
+            
+            # Save workbook
+            workbook.save(output)
+            
+            # Get the bytes
+            output.seek(0)
+            result = output.getvalue()
+            
+            # Close BytesIO
+            output.close()
+            
+            return result
+            
+        except Exception as e:
+            logger.error(f"Erreur sauvegarde workbook: {str(e)}")
+            # If error is due to images, try saving without them
+            try:
+                logger.info("Tentative de sauvegarde sans images...")
+                return self._save_workbook_without_images(workbook)
+            except:
+                raise e
+    
+    def _save_workbook_without_images(self, workbook: openpyxl.Workbook) -> bytes:
+        """Sauvegarde un workbook sans les images"""
+        try:
+            # Create a copy without images
+            output = BytesIO()
+            
+            # Remove images from all sheets
+            for sheet in workbook.worksheets:
+                if hasattr(sheet, '_images'):
+                    sheet._images = []
+            
+            # Save workbook
+            workbook.save(output)
+            
+            # Get the bytes
+            output.seek(0)
+            result = output.getvalue()
+            output.close()
+            
+            logger.warning("Workbook sauvegardé sans images")
+            return result
+            
+        except Exception as e:
+            logger.error(f"Erreur sauvegarde sans images: {str(e)}")
+            raise
     
     def sheet_to_dataframe(self, workbook: openpyxl.Workbook, sheet_name: str) -> pd.DataFrame:
         """Convertit une feuille en DataFrame"""
@@ -74,7 +143,12 @@ class ExcelHandler:
         # Écrire les données
         for r_idx, row in enumerate(df.values):
             for c_idx, value in enumerate(row):
-                sheet.cell(row=start_row + r_idx, column=start_col + c_idx, value=value)
+                try:
+                    # Avoid writing None values
+                    if value is not None and str(value) != 'nan':
+                        sheet.cell(row=start_row + r_idx, column=start_col + c_idx, value=value)
+                except Exception as e:
+                    logger.warning(f"Erreur écriture cellule ({start_row + r_idx}, {start_col + c_idx}): {str(e)}")
         
         logger.info(f"DataFrame écrit dans la feuille '{sheet_name}'")
     
@@ -91,17 +165,22 @@ class ExcelHandler:
                 'name': sheet_name,
                 'max_row': sheet.max_row,
                 'max_column': sheet.max_column,
-                'has_formulas': False
+                'has_formulas': False,
+                'has_images': False
             }
             
             # Vérifier s'il y a des formules
-            for row in sheet.iter_rows():
+            for row in sheet.iter_rows(max_row=min(100, sheet.max_row)):  # Limit scan
                 for cell in row:
                     if cell.value and isinstance(cell.value, str) and cell.value.startswith('='):
                         sheet_info['has_formulas'] = True
                         break
                 if sheet_info['has_formulas']:
                     break
+            
+            # Check for images
+            if hasattr(sheet, '_images') and sheet._images:
+                sheet_info['has_images'] = True
             
             info['sheets'].append(sheet_info)
         
@@ -125,3 +204,18 @@ class ExcelHandler:
         logger.info("Application des formules depuis le script")
         # TODO: Implémenter l'exécution du script
         return workbook
+    
+    def cleanup_temp_files(self):
+        """Nettoie les fichiers temporaires"""
+        for temp_file in self.temp_files:
+            try:
+                if os.path.exists(temp_file):
+                    os.unlink(temp_file)
+                    logger.info(f"Fichier temporaire supprimé: {temp_file}")
+            except Exception as e:
+                logger.warning(f"Impossible de supprimer {temp_file}: {str(e)}")
+        self.temp_files = []
+    
+    def __del__(self):
+        """Destructeur pour nettoyer les fichiers temporaires"""
+        self.cleanup_temp_files()

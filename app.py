@@ -69,7 +69,7 @@ def temporary_file(content, suffix=''):
 # Initialisation des services
 @st.cache_resource
 def init_services():
-    return {
+    services = {
         'llm_client': MistralClient(),
         'file_handler': FileHandler(),
         'chat_handler': ChatHandler(),
@@ -79,6 +79,12 @@ def init_services():
         'json_helper': JSONHelper(),
         'budget_mapper': BudgetMapper(MistralClient())  # Add budget mapper
     }
+    
+    # Register cleanup for Excel handler
+    import atexit
+    atexit.register(lambda: services['excel_handler'].cleanup_temp_files())
+    
+    return services
 
 services = init_services()
 
@@ -411,12 +417,14 @@ async def extract_budget_data():
             st.session_state.chat_history.append({
                 'role': 'assistant',
                 'content': f"✅ J'ai extrait {len(data)} entrées budgétaires du fichier '{file_name}'. "
-                          f"Vous pouvez maintenant les visualiser et les éditer dans l'onglet Analyse.",
+                          f"Vous pouvez maintenant les visualiser et les éditer dans l'onglet 'Extraction & Analyse'.",
                 'timestamp': datetime.now().strftime("%H:%M")
             })
             
-            # Switch to analysis tab
+            # Switch to analysis tab - but keep it in the split view
             st.session_state.excel_tab = 'analysis'
+            # Keep split view to see both Excel and extraction
+            st.session_state.layout_mode = 'split'
         else:
             st.warning("⚠️ Aucune donnée budgétaire trouvée")
             
