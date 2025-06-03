@@ -63,6 +63,7 @@ class BudgetExtractor:
     
     def _attach_source_phrases(self, budget_data: List[Dict], full_text: str) -> List[Dict]:
         """Attache les phrases sources aux données extraites"""
+        #TODO Modifier le code pour que la source phrase des mails soit seulement issue du corps du mail
         sentences = self._split_into_sentences(full_text)
         
         for entry in budget_data:

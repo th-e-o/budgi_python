@@ -1,11 +1,9 @@
-# ui/styles.py - Simplified and Modern UI styles
-"""Clean, modern UI with focus on usability and performance"""
-
+# ui/styles.py - Version complètement corrigée et simplifiée
 def get_main_styles() -> str:
-    """Returns simplified, modern CSS styles avec corrections d'affichage"""
+    """Returns simplified CSS styles that work with Streamlit's structure"""
     return """
     <style>
-        /* CSS Variables for Clean Theme */
+        /* CSS Variables */
         :root {
             --primary: #0055A4;
             --primary-dark: #003d7a;
@@ -33,140 +31,49 @@ def get_main_styles() -> str:
             --transition: 200ms ease;
         }
         
-        /* Reset and base styles */
-        * {
-            box-sizing: border-box;
-        }
-        
         /* Hide Streamlit defaults */
         #MainMenu, footer, header {
             visibility: hidden;
         }
         
-        /* CRITICAL: Force removal of ALL Streamlit spacing */
-        .stApp {
-            overflow: hidden;
-        }
-        
+        /* Remove Streamlit spacing */
         .main > div {
-            padding: 0 !important;
-            max-width: 100% !important;
-        }
-        
-        section.main > div {
-            padding: 0 !important;
+            padding-top: 0 !important;
         }
         
         .block-container {
-            padding: 0 !important;
-            margin: 0 !important;
+            padding-top: 0 !important;
             max-width: 100% !important;
         }
         
-        .element-container {
-            margin: 0 !important;
-        }
-        
-        /* Remove all gaps and spacing */
-        div[data-testid="stVerticalBlock"] > div {
-            gap: 0 !important;
-        }
-        
-        div[data-testid="column"] {
-            padding: 0 !important;
-            gap: 0 !important;
-        }
-        
-        div[data-testid="stHorizontalBlock"] {
-            margin: 0 !important;
-            padding: 0 !important;
-            gap: 0 !important;
-        }
-        
-        /* Hide Streamlit elements */
-        div[data-testid="stToolbar"] {
-            display: none !important;
-        }
-        
-        div[data-testid="stDecoration"] {
-            display: none !important;
-        }
-        
-        div[data-testid="stStatusWidget"] {
-            display: none !important;
-        }
-        
-        /* Main content structure */
-        .main {
+        /* Background */
+        .stApp {
             background: var(--background);
-            min-height: 100vh;
-            padding: 0 !important;
-            margin: 0 !important;
         }
         
-        .main > div {
-            height: 100vh;
-            display: flex;
-            flex-direction: column;
-        }
-        
-        /* UNIFIED Panel Styles (no duplication) */
-        .chat-panel, .excel-panel {
+        /* Chat Panel Styles */
+        .chat-panel, .chat-panel_full {
             background: var(--surface);
             border-radius: var(--radius-lg);
             box-shadow: var(--shadow-sm);
-            height: calc(100vh - 100px);
-            display: flex;
-            flex-direction: column;
+            margin-bottom: 1rem;
             overflow: hidden;
-            position: relative;
         }
         
-        .chat-panel-full, .excel-panel-full {
-            background: var(--surface);
+        /* Excel Panel Styles */
+        .excel-panel, .excel-panel_full {
+            background: #f5f7fa;
             border-radius: var(--radius-lg);
             box-shadow: var(--shadow-sm);
-            height: calc(100vh - 100px);
-            display: flex;
-            flex-direction: column;
             overflow: hidden;
-            max-width: 1200px;
-            margin: 0 auto;
         }
         
-        /* Chat Structure */
-        .modern-chat-header {
+        /* Headers */
+        .modern-chat-header, .excel-header {
             background: var(--primary);
             color: white;
             padding: 1rem 1.5rem;
-            display: flex;
-            align-items: center;
-            justify-content: space-between;
-            flex-shrink: 0;
-        }
-        
-        .chat-messages-wrapper {
-            flex: 1;
-            overflow: hidden;
-            padding: 1rem;
-            position: relative;
-        }
-        
-        .chat-input-wrapper {
-            padding: 1rem;
-            border-top: 1px solid var(--border);
-            background: var(--background);
-            flex-shrink: 0;
-        }
-        
-        /* Excel Structure */
-        .excel-header {
-            background: var(--primary);
-            color: white;
-            padding: 1rem 1.5rem;
-            flex-shrink: 0;
-            z-index: 10;
-            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+            border-radius: var(--radius-lg) var(--radius-lg) 0 0;
         }
         
         .excel-header h3 {
@@ -176,50 +83,10 @@ def get_main_styles() -> str:
             font-weight: 600;
         }
         
-        .excel-content {
-            flex: 1;
-            overflow-y: auto;
-            padding: 1rem;
-            position: relative;
-        }
-        
-        /* Fix container heights */
-        div[data-testid="stVerticalBlock"] > div[style*="height"] {
-            overflow-y: auto !important;
-        }
-        
-        .stContainer {
-            height: 100% !important;
-        }
-        
-        /* Excel Expanders Styling */
-        .excel-content .stExpander {
-            border: 1px solid var(--border) !important;
-            border-radius: var(--radius-lg) !important;
-            margin-bottom: 1rem !important;
-            background: var(--surface) !important;
-            box-shadow: var(--shadow-sm) !important;
-            transition: all var(--transition) !important;
-        }
-        
-        .stExpander:hover {
-            box-shadow: var(--shadow-md) !important;
-            transform: translateY(-1px) !important;
-        }
-        
-        .stExpander > div:first-child {
-            background: linear-gradient(to right, var(--border-light), transparent) !important;
-            border-radius: var(--radius-lg) var(--radius-lg) 0 0 !important;
-            padding: 1rem 1.5rem !important;
-            border-bottom: 1px solid var(--border) !important;
-            font-weight: 600 !important;
-            color: var(--text-primary) !important;
-        }
-        
-        .stExpander[aria-expanded="false"] > div:first-child {
-            border-radius: var(--radius-lg) !important;
-            border-bottom: none !important;
-            background: var(--border-light) !important;
+        .excel-header p {
+            margin: 0.5rem 0 0 0;
+            opacity: 0.9;
+            font-size: 0.875rem;
         }
         
         /* Chat Components */
@@ -227,10 +94,6 @@ def get_main_styles() -> str:
             display: flex;
             align-items: center;
             gap: 1rem;
-        }
-        
-        .chat-avatar-wrapper {
-            position: relative;
         }
         
         .chat-avatar {
@@ -367,6 +230,25 @@ def get_main_styles() -> str:
             30% { transform: translateY(-10px); }
         }
         
+        /* Expander styling */
+        .stExpander {
+            border: 1px solid var(--border) !important;
+            border-radius: var(--radius-lg) !important;
+            margin-bottom: 1rem !important;
+            background: var(--surface) !important;
+            box-shadow: var(--shadow-sm) !important;
+        }
+        
+        .stExpander:hover {
+            box-shadow: var(--shadow-md) !important;
+        }
+        
+        .stExpander > div:first-child {
+            background: var(--border-light) !important;
+            padding: 1rem 1.5rem !important;
+            font-weight: 600 !important;
+        }
+        
         /* Buttons */
         .stButton > button {
             background: var(--primary);
@@ -430,41 +312,6 @@ def get_main_styles() -> str:
             border: 1px solid var(--border);
         }
         
-        /* Scrollbars */
-        ::-webkit-scrollbar {
-            width: 8px;
-            height: 8px;
-        }
-        
-        ::-webkit-scrollbar-track {
-            background: var(--border-light);
-            border-radius: 4px;
-        }
-        
-        ::-webkit-scrollbar-thumb {
-            background: var(--border);
-            border-radius: 4px;
-        }
-        
-        ::-webkit-scrollbar-thumb:hover {
-            background: var(--text-secondary);
-        }
-        
-        /* Excel specific scrollbar */
-        .excel-content::-webkit-scrollbar {
-            width: 10px;
-        }
-        
-        .excel-content::-webkit-scrollbar-track {
-            background: var(--border-light);
-            border-radius: 5px;
-        }
-        
-        .excel-content::-webkit-scrollbar-thumb {
-            background: var(--primary);
-            border-radius: 5px;
-        }
-        
         /* Drag overlay */
         .drop-overlay {
             position: fixed;
@@ -484,56 +331,43 @@ def get_main_styles() -> str:
             color: white;
         }
         
-        /* Welcome styles */
-        .welcome-container {
-            text-align: center;
-            padding: 3rem 2rem;
-            max-width: 600px;
-            margin: 0 auto;
+        /* Scrollbar */
+        ::-webkit-scrollbar {
+            width: 8px;
+            height: 8px;
         }
         
-        .welcome-icon {
-            font-size: 3rem;
-            margin-bottom: 1rem;
-        }
-        
-        .welcome-container h2 {
-            color: var(--text-primary);
-            margin: 0 0 0.5rem 0;
-            font-size: 1.75rem;
-        }
-        
-        .welcome-features {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
-            gap: 1rem;
-            margin: 2rem 0;
-        }
-        
-        .feature-card {
+        ::-webkit-scrollbar-track {
             background: var(--border-light);
-            padding: 1.25rem;
-            border-radius: var(--radius-lg);
-            transition: all var(--transition);
+            border-radius: 4px;
         }
         
-        .feature-card:hover {
-            transform: translateY(-2px);
-            box-shadow: var(--shadow-md);
+        ::-webkit-scrollbar-thumb {
+            background: var(--border);
+            border-radius: 4px;
+        }
+        
+        ::-webkit-scrollbar-thumb:hover {
+            background: var(--text-secondary);
+        }
+        
+        /* Container fixes */
+        div[data-testid="stVerticalBlock"] > div[style*="height"] {
+            overflow-y: auto !important;
+        }
+        
+        /* Remove extra spacing */
+        .element-container {
+            margin: 0 !important;
+        }
+        
+        div[data-testid="stToolbar"] {
+            display: none !important;
         }
         
         /* Responsive */
         @media (max-width: 768px) {
             .message-bubble { max-width: 85%; }
-            .welcome-features { grid-template-columns: 1fr; }
-        }
-        
-        /* Additional cleanup */
-        .css-1kyxreq { display: none; }
-        button[title="View fullscreen"] { display: none; }
-        .css-1n76uvr, .css-1n543e5, .css-12oz5g7 {
-            padding: 0 !important;
-            margin: 0 !important;
         }
     </style>
     """
@@ -542,7 +376,7 @@ def get_javascript() -> str:
     """Returns simplified JavaScript"""
     return """
     <script>
-        // Simplified drag and drop
+        // Drag and drop functionality
         (function() {
             let dragCounter = 0;
             const dropOverlay = document.getElementById('drop-overlay');
@@ -583,28 +417,6 @@ def get_javascript() -> str:
                     }
                 }
             });
-            
-            // Auto-scroll for new messages
-            const observer = new MutationObserver(() => {
-                const containers = document.querySelectorAll('[data-testid="stVerticalBlock"] > div');
-                containers.forEach(container => {
-                    if (container.style.height && container.style.height.includes('px')) {
-                        container.scrollTo({
-                            top: container.scrollHeight,
-                            behavior: 'smooth'
-                        });
-                    }
-                });
-            });
-            
-            setTimeout(() => {
-                const containers = document.querySelectorAll('[data-testid="stVerticalBlock"] > div');
-                containers.forEach(container => {
-                    if (container.style.height && container.style.height.includes('px')) {
-                        observer.observe(container, { childList: true, subtree: true });
-                    }
-                });
-            }, 1000);
         })();
     </script>
     """

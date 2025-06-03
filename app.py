@@ -15,7 +15,7 @@ from modules.budget_mapper import BudgetMapper
 # Configuration de la page
 st.set_page_config(
     page_title="BudgiBot - Assistant Budgétaire",
-    page_icon="🤖",
+    page_icon="",
     layout="wide",
     initial_sidebar_state="collapsed",  # Pas de sidebar
     menu_items={
@@ -45,60 +45,56 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# Injection des styles
+# Injection des styles CSS et JavaScript
 st.markdown(get_main_styles(), unsafe_allow_html=True)
 st.markdown(get_javascript(), unsafe_allow_html=True)
+# CSS additionnel pour forcer la suppression des marges Streamlit
 st.markdown("""
 <style>
-    /* Forcer la suppression de tous les paddings/margins Streamlit */
+    /* Force removal of Streamlit default spacing */
     .main > div {
         padding-top: 0rem !important;
         padding-bottom: 0rem !important;
-        padding-left: 0rem !important;
-        padding-right: 0rem !important;
+        padding-left: 1rem !important;
+        padding-right: 1rem !important;
     }
     
-    /* Supprimer l'espace du header Streamlit */
+    /* Remove header space */
     header[data-testid="stHeader"] {
         display: none !important;
     }
     
-    /* Supprimer le footer */
-    footer {
-        display: none !important;
+    /* Block container */
+    .block-container {
+        padding-top: 1rem !important;
+        padding-bottom: 0rem !important;
+        max-width: 100% !important;
     }
     
-    /* Fix pour le premier élément */
+    /* First element fix */
     .element-container:first-child {
         margin-top: 0 !important;
     }
     
-    /* Supprimer les marges des blocks */
-    .block-container {
-        padding: 0 !important;
-        margin: 0 !important;
-        max-width: 100% !important;
-    }
-    
-    /* Fix spécifique pour le container de l'app */
-    section.main {
-        padding: 0 !important;
-        margin: 0 !important;
-    }
-    
-    /* Cacher complètement le menu hamburger */
+    /* Hide Streamlit menu */
     button[kind="header"] {
         display: none !important;
     }
     
-    /* S'assurer que le viewport utilise toute la hauteur */
-    #root > div:nth-child(1) {
-        overflow: hidden !important;
-    }
-    
+    /* App container */
     .stApp {
         margin: 0 !important;
         padding: 0 !important;
+    }
+    
+    /* Remove excessive gaps */
+    div[data-testid="stVerticalBlock"] > div:not([style*="height"]) {
+        gap: 0.5rem !important;
+    }
+    
+    /* Container height fix */
+    div[data-testid="stVerticalBlock"] > div[style*="height"] {
+        overflow-y: auto !important;
     }
 </style>
 """, unsafe_allow_html=True)
@@ -143,18 +139,12 @@ def init_services():
     return services
 
 # Message de bienvenue
-WELCOME_MESSAGE = """👋 Bonjour ! Je suis BudgiBot, votre assistant budgétaire intelligent.
-
-Je peux vous aider à :
-• 📊 **Analyser vos fichiers Excel** - Chargez un fichier .xlsx pour commencer
-• 💰 **Extraire des données budgétaires** - À partir de PDF, Word, emails ou textes
-• 🛠️ **Utiliser l'outil BPSS** - Pour traiter vos fichiers PP-E-S, DPP18 et BUD45
-
-**Pour commencer :**
-- Envoyez-moi un fichier en cliquant sur 📎 ou glissez-le directement ici
-- Ou posez-moi une question sur vos besoins budgétaires
-
-💡 *Astuce : Utilisez la vue partagée (⚡) pour voir Excel et le chat en même temps !*"""
+WELCOME_MESSAGE = """Bonjour, 
+je peux vous aider à :
+• **Analyser vos fichiers Excel** - Chargez un fichier .xlsx pour commencer
+• **Extraire des données budgétaires** - À partir de PDF, Word, emails ou textes
+• **Utiliser l'outil BPSS** - Pour traiter vos fichiers PP-E-S, DPP18 et BUD45
+"""
 
 def init_session_state():
     """Initialise l'état de session"""
@@ -171,7 +161,7 @@ def init_session_state():
         'processed_files': set(),
         'temp_files': [],
         'layout_mode': 'chat',
-        'mapping_report': None,  # Ajouter cette ligne
+        'mapping_report': None,  
         'excel_tab': 'data',  # Ajouter pour gérer l'onglet actif
     }
     
@@ -414,36 +404,61 @@ async def process_bpss(data: dict):
     try:
         progress = st.progress(0, text="Traitement BPSS...")
         
-        # Sauvegarder temporairement
+        # Créer des fichiers temporaires SANS les supprimer automatiquement
+        import tempfile
+        import os
+        
+        temp_files = []
         temp_paths = {}
-        for key, file in data['files'].items():
-            with temporary_file(file.getbuffer(), suffix='.xlsx') as path:
-                temp_paths[key] = path
         
-        progress.progress(50, text="Application des données...")
-        
-        # Traiter
-        result_wb = services['bpss_tool'].process_files(
-            ppes_path=temp_paths['ppes'],
-            dpp18_path=temp_paths['dpp18'],
-            bud45_path=temp_paths['bud45'],
-            year=data['year'],
-            ministry_code=data['ministry'],
-            program_code=data['program'],
-            target_workbook=st.session_state.excel_workbook or openpyxl.Workbook()
-        )
-        
-        st.session_state.excel_workbook = result_wb
-        progress.progress(100, text="Terminé!")
-        
-        # Message de succès
-        st.session_state.chat_history.append({
-            'role': 'assistant',
-            'content': f"✅ Traitement BPSS terminé!\n\nJ'ai intégré les données pour:\n• Année: {data['year']}\n• Ministère: {data['ministry']}\n• Programme: {data['program']}\n\nLes feuilles ont été ajoutées à votre fichier Excel.",
-            'timestamp': datetime.now().strftime("%H:%M")
-        })
-        
-        st.success("✅ Traitement BPSS réussi!")
+        try:
+            # Sauvegarder les fichiers temporairement
+            for key, file in data['files'].items():
+                # Créer un fichier temporaire
+                fd, temp_path = tempfile.mkstemp(suffix='.xlsx')
+                temp_files.append(temp_path)  # Garder la trace pour nettoyage
+                
+                # Écrire le contenu
+                with os.fdopen(fd, 'wb') as tmp:
+                    tmp.write(file.getbuffer())
+                
+                temp_paths[key] = temp_path
+                logger.info(f"Fichier temporaire créé: {key} -> {temp_path}")
+            
+            progress.progress(50, text="Application des données...")
+            
+            # Traiter avec les fichiers temporaires
+            result_wb = services['bpss_tool'].process_files(
+                ppes_path=temp_paths['ppes'],
+                dpp18_path=temp_paths['dpp18'],
+                bud45_path=temp_paths['bud45'],
+                year=data['year'],
+                ministry_code=data['ministry'],
+                program_code=data['program'],
+                target_workbook=st.session_state.excel_workbook or openpyxl.Workbook()
+            )
+            
+            st.session_state.excel_workbook = result_wb
+            progress.progress(100, text="Terminé!")
+            
+            # Message de succès
+            st.session_state.chat_history.append({
+                'role': 'assistant',
+                'content': f"✅ Traitement BPSS terminé!\n\nJ'ai intégré les données pour:\n• Année: {data['year']}\n• Ministère: {data['ministry']}\n• Programme: {data['program']}\n\nLes feuilles ont été ajoutées à votre fichier Excel.",
+                'timestamp': datetime.now().strftime("%H:%M")
+            })
+            
+            st.success("✅ Traitement BPSS réussi!")
+            
+        finally:
+            # Nettoyer les fichiers temporaires
+            for temp_file in temp_files:
+                try:
+                    if os.path.exists(temp_file):
+                        os.unlink(temp_file)
+                        logger.info(f"Fichier temporaire supprimé: {temp_file}")
+                except Exception as e:
+                    logger.warning(f"Impossible de supprimer {temp_file}: {str(e)}")
         
     except Exception as e:
         logger.error(f"Erreur BPSS: {str(e)}")
@@ -519,18 +534,19 @@ async def map_budget_to_cells():
                     entries_df
                 )
                 
-                # Afficher les résultats
+                # Afficher les résultats SANS colonnes imbriquées
                 if success > 0:
-                    st.success(f"✅ {success} cellules mises à jour avec succès!")
+                    # Message de succès simple
+                    st.success(f"""
+                    ✅ Mapping terminé avec succès!
                     
-                    # Afficher un résumé du rapport
-                    col1, col2, col3 = st.columns(3)
-                    with col1:
-                        st.metric("Taux de mapping", f"{report['summary']['mapping_rate']:.1f}%")
-                    with col2:
-                        st.metric("Confiance moyenne", f"{report['summary']['average_confidence']:.1%}")
-                    with col3:
-                        st.metric("À vérifier", len(report['low_confidence']))
+                    **Résultats:**
+                    - {success} cellules mises à jour
+                    - {report['summary']['mapping_rate']:.1f}% de taux de mapping
+                    - {report['summary']['average_confidence']:.1%} de confiance moyenne
+                    
+                    👉 Consultez l'interface de vérification dans l'onglet Excel pour valider les mappings.
+                    """)
                     
                     # Message dans le chat
                     st.session_state.chat_history.append({
@@ -544,7 +560,8 @@ async def map_budget_to_cells():
                     st.rerun()
                     
                 if errors:
-                    with st.expander("⚠️ Problèmes rencontrés"):
+                    # Afficher les erreurs dans un expander
+                    with st.expander("⚠️ Problèmes rencontrés", expanded=False):
                         for error in errors[:10]:  # Limiter à 10 erreurs
                             st.warning(error)
                         if len(errors) > 10:

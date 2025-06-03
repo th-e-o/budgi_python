@@ -17,22 +17,85 @@ class BPSSTool:
         }
     
     def process_files(self, ppes_path: str, dpp18_path: str, bud45_path: str,
-                     year: int, ministry_code: str, program_code: str,
-                     target_workbook: openpyxl.Workbook) -> openpyxl.Workbook:
+                 year: int, ministry_code: str, program_code: str,
+                 target_workbook: openpyxl.Workbook) -> openpyxl.Workbook:
         """Traite les fichiers BPSS et met à jour le workbook cible"""
         try:
+            # Vérifier que les fichiers existent
+            import os
+            for path, name in [(ppes_path, 'PP-E-S'), (dpp18_path, 'DPP18'), (bud45_path, 'BUD45')]:
+                if not os.path.exists(path):
+                    raise FileNotFoundError(f"Fichier {name} introuvable: {path}")
+                logger.info(f"Fichier {name} trouvé: {path}")
+            
             # Charger les données
             logger.info("Chargement des fichiers BPSS...")
             
-            # PP-E-S
+            # PP-E-S - Gérer les erreurs de feuilles manquantes
             sheet_names = self._get_sheet_names(ministry_code, program_code)
-            df_pp_categ = pd.read_excel(ppes_path, sheet_name=sheet_names['pp_categ'])
-            df_entrants = pd.read_excel(ppes_path, sheet_name=sheet_names['entrants'])
-            df_sortants = pd.read_excel(ppes_path, sheet_name=sheet_names['sortants'])
             
-            # DPP18 et BUD45
-            df_dpp18 = pd.read_excel(dpp18_path)
-            df_bud45 = pd.read_excel(bud45_path)
+            try:
+                # Essayer de charger avec les noms de feuilles calculés
+                df_pp_categ = pd.read_excel(ppes_path, sheet_name=sheet_names['pp_categ'])
+                df_entrants = pd.read_excel(ppes_path, sheet_name=sheet_names['entrants'])
+                df_sortants = pd.read_excel(ppes_path, sheet_name=sheet_names['sortants'])
+            except Exception as e:
+                logger.warning(f"Erreur avec les noms de feuilles calculés: {str(e)}")
+                
+                # Fallback : Lister les feuilles disponibles et essayer de deviner
+                try:
+                    xl_file = pd.ExcelFile(ppes_path)
+                    available_sheets = xl_file.sheet_names
+                    logger.info(f"Feuilles disponibles dans PP-E-S: {available_sheets}")
+                    
+                    # Chercher les feuilles par pattern
+                    pp_categ_sheet = None
+                    entrants_sheet = None
+                    sortants_sheet = None
+                    
+                    for sheet in available_sheets:
+                        sheet_lower = sheet.lower()
+                        if 'pp_categ' in sheet_lower or 'categ' in sheet_lower:
+                            pp_categ_sheet = sheet
+                        elif 'entrant' in sheet_lower:
+                            entrants_sheet = sheet
+                        elif 'sortant' in sheet_lower:
+                            sortants_sheet = sheet
+                    
+                    # Si on ne trouve pas, prendre les 3 premières feuilles
+                    if not all([pp_categ_sheet, entrants_sheet, sortants_sheet]):
+                        if len(available_sheets) >= 3:
+                            pp_categ_sheet = pp_categ_sheet or available_sheets[0]
+                            entrants_sheet = entrants_sheet or available_sheets[1]
+                            sortants_sheet = sortants_sheet or available_sheets[2]
+                        else:
+                            raise ValueError(f"Le fichier PP-E-S doit contenir au moins 3 feuilles, trouvé: {len(available_sheets)}")
+                    
+                    logger.info(f"Utilisation des feuilles: {pp_categ_sheet}, {entrants_sheet}, {sortants_sheet}")
+                    
+                    # Charger avec les feuilles trouvées
+                    df_pp_categ = pd.read_excel(ppes_path, sheet_name=pp_categ_sheet)
+                    df_entrants = pd.read_excel(ppes_path, sheet_name=entrants_sheet)
+                    df_sortants = pd.read_excel(ppes_path, sheet_name=sortants_sheet)
+                    
+                except Exception as e2:
+                    logger.error(f"Impossible de charger PP-E-S: {str(e2)}")
+                    raise
+            
+            # DPP18 et BUD45 - Plus robuste
+            try:
+                df_dpp18 = pd.read_excel(dpp18_path)
+            except Exception as e:
+                logger.error(f"Erreur chargement DPP18: {str(e)}")
+                # Essayer de charger la première feuille
+                df_dpp18 = pd.read_excel(dpp18_path, sheet_name=0)
+            
+            try:
+                df_bud45 = pd.read_excel(bud45_path)
+            except Exception as e:
+                logger.error(f"Erreur chargement BUD45: {str(e)}")
+                # Essayer de charger la première feuille
+                df_bud45 = pd.read_excel(bud45_path, sheet_name=0)
             
             # Appliquer les traitements
             target_workbook = self._load_ppes_data(
@@ -45,7 +108,7 @@ class BPSSTool:
                 target_workbook, df_bud45, program_code
             )
             
-            logger.info("Traitement BPSS terminé")
+            logger.info("Traitement BPSS terminé avec succès")
             return target_workbook
             
         except Exception as e:

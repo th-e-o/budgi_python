@@ -68,7 +68,7 @@ class FileHandler:
     
     @staticmethod
     def _read_msg_file(file_path: Union[str, Path]) -> str:
-        """Lit un fichier MSG (email Outlook) - Version améliorée"""
+        """Lit un fichier MSG (email Outlook)"""
         try:
             msg = extract_msg.Message(file_path)
             
@@ -89,7 +89,7 @@ class FileHandler:
             # Date
             date = str(msg.date) if hasattr(msg, 'date') and msg.date else "(Date inconnue)"
             
-            # Corps du message - amélioration de l'extraction
+            # Corps du message
             body = ""
             if hasattr(msg, 'body') and msg.body:
                 body = msg.body

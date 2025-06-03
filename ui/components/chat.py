@@ -13,17 +13,8 @@ class ChatComponents:
         return """
         <div class="modern-chat-header">
             <div class="chat-header-content">
-                <div class="chat-avatar-wrapper">
-                    <div class="chat-avatar">
-                        <span>🤖</span>
-                    </div>
-                    <span class="online-indicator"></span>
-                </div>
                 <div class="chat-header-info">
-                    <h3>BudgiBot Assistant</h3>
-                    <span class="chat-status">
-                        En ligne • Prêt à vous aider
-                    </span>
+                    <h4>BudgiBot</h4>
                 </div>
             </div>
         </div>

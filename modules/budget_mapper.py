@@ -22,13 +22,13 @@ class BudgetMapper:
         
         # Poids pour le scoring
         self.weights = {
-            'description_match': 0.25,
-            'axe_match': 0.15,
-            'montant_match': 0.15,
-            'date_match': 0.15,
-            'nature_match': 0.10,
-            'unite_match': 0.10,
-            'source_context': 0.10
+            'description_match': 0.22,
+            'axe_match': 0.22,
+            'montant_match': 0,
+            'date_match': 0.22,
+            'nature_match': 0.22,
+            'unite_match': 0,
+            'source_context': 0.12
         }
     
     async def map_entries_to_cells(self, entries: List[Dict], tags: List[Dict], 

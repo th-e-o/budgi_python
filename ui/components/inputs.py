@@ -14,7 +14,7 @@ class InputComponents:
         st.markdown('<div class="chat-input-container">', unsafe_allow_html=True)
         
         # Layout en colonnes
-        input_col, actions_col = st.columns([5, 1])
+        input_col, actions_col = st.columns([4, 1])
         
         # Obtenir la clé dynamique
         input_key = f"user_message_input_{st.session_state.get('message_input_key', 0)}"
@@ -27,7 +27,7 @@ class InputComponents:
                 placeholder="Tapez votre message... (Enter pour envoyer, Shift+Enter pour nouvelle ligne)",
                 height=80,
                 label_visibility="collapsed",
-                max_chars=2000,
+                max_chars=6000,
                 value=""  # Toujours vide car nouvelle clé
             )
         
