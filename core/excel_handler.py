@@ -113,7 +113,8 @@ class ExcelHandler:
             logger.error(f"Erreur sauvegarde sans images: {str(e)}")
             raise
     
-    def sheet_to_dataframe(self, workbook: openpyxl.Workbook, sheet_name: str) -> pd.DataFrame:
+    def sheet_to_dataframe(self, workbook: openpyxl.Workbook, sheet_name: str, 
+                       show_formulas: bool = False) -> pd.DataFrame:
         """Convertit une feuille en DataFrame"""
         if sheet_name not in workbook.sheetnames:
             raise ValueError(f"Feuille '{sheet_name}' non trouvée")
@@ -121,12 +122,26 @@ class ExcelHandler:
         sheet = workbook[sheet_name]
         data = []
         
-        for row in sheet.iter_rows(values_only=True):
-            data.append(list(row))
+        # Si on veut les valeurs calculées et qu'on a le chemin du fichier
+        if not show_formulas and hasattr(self, 'current_path') and self.current_path:
+            try:
+                # Charger en mode data_only pour avoir les valeurs
+                wb_values = openpyxl.load_workbook(self.current_path, data_only=True)
+                sheet_values = wb_values[sheet_name]
+                for row in sheet_values.iter_rows(values_only=True):
+                    data.append(list(row))
+                wb_values.close()
+            except:
+                # Fallback sur les valeurs actuelles
+                for row in sheet.iter_rows(values_only=True):
+                    data.append(list(row))
+        else:
+            # Mode formules ou pas de chemin
+            for row in sheet.iter_rows(values_only=True):
+                data.append(list(row))
         
         if data:
             df = pd.DataFrame(data)
-            # Nettoyer les valeurs None
             df = df.fillna('')
             return df
         else:

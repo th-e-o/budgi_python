@@ -135,7 +135,7 @@ class MainLayout:
             # Section 1: Données
             with st.expander("**Données Excel**", expanded=True):
                 st.caption("Visualisez et éditez vos feuilles Excel")
-                self._render_excel_data_tab()
+                self._render_excel_data_tab(on_tool_action)  # Passer on_tool_action
             
             # Section 2: Extraction et Analyse
             with st.expander("**Extraction et analyse de l'extraction**", expanded=True):
@@ -213,8 +213,7 @@ class MainLayout:
                 st.session_state.last_file_key = file_key
                 on_file_upload(uploaded_file)
     
-    def _render_excel_data_tab(self):
-        """Renders Excel data visualization tab - simplified"""
+    def _render_excel_data_tab(self, on_tool_action : Callable):
         if not st.session_state.get('excel_workbook'):
             # Clean upload area
             uploaded = st.file_uploader(
@@ -241,33 +240,48 @@ class MainLayout:
             wb = st.session_state.excel_workbook
             sheets = wb.sheetnames
             
-            col1, col2, col3 = st.columns([4, 1, 1])
+            col1, col2, col3, col4, col5 = st.columns([3, 1, 1, 1, 1])
             with col1:
                 selected_sheet = st.selectbox(
                     "Sélectionner une feuille",
                     sheets,
                     key="sheet_selector_main"
                 )
-            
+
             with col2:
-                if st.button("📊 Parser", help="Analyser les formules"):
-                    with st.spinner("Analyse en cours..."):
-                        self._handle_parse_formulas()
-            
+                # Toggle valeurs/formules
+                display_mode = st.selectbox(
+                    "Afficher",
+                    ["Valeurs", "Formules"],
+                    key="display_mode_toggle"
+                )
+
             with col3:
+                if st.button("📊 Parser", help="Analyser les formules"):
+                    on_tool_action({'action': 'parse_excel'})
+
+            with col4:
+                # Bouton Appliquer si formules parsées
+                if st.session_state.get('parsed_formulas'):
+                    if st.button("⚡ Appliquer", help="Appliquer les formules"):
+                        on_tool_action({'action': 'apply_formulas'})
+
+            with col5:
                 st.download_button(
                     "💾",
                     data=self.services['excel_handler'].save_workbook_to_bytes(wb),
                     file_name=f"export_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx",
-                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                    help="Exporter le fichier"
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
                 )
-            
+                        
             # Display data
             if selected_sheet:
                 try:
-                    df = self.services['excel_handler'].sheet_to_dataframe(wb, selected_sheet)
-                    
+                    df = self.services['excel_handler'].sheet_to_dataframe(
+                        wb, 
+                        selected_sheet,
+                        show_formulas=(display_mode == "Formules")
+                    )                    
                     # Simple info
                     st.caption(f"📊 {len(df)} lignes × {len(df.columns)} colonnes")
                     
@@ -733,36 +747,3 @@ class MainLayout:
             </div>
         </div>
         """, unsafe_allow_html=True)
-    
-    def _handle_parse_formulas(self):
-        """Handle formula parsing with progress"""
-        if not st.session_state.get('current_file'):
-            st.error("Aucun fichier à analyser")
-            return
-            
-        try:
-            from modules.excel_parser.parser_v3 import ExcelFormulaParser
-            import tempfile
-            
-            # Save file temporarily
-            with tempfile.NamedTemporaryFile(suffix='.xlsx', delete=False) as tmp:
-                tmp.write(st.session_state.current_file['raw_bytes'])
-                temp_path = tmp.name
-            
-            # Parse formulas
-            parser = ExcelFormulaParser()
-            result = parser.parse_excel_file(temp_path, emit_script=True)
-            
-            # Clean up
-            import os
-            os.unlink(temp_path)
-            
-            # Show results
-            stats = result['statistics']
-            st.success(f"✅ Analyse terminée: {stats['success']}/{stats['total']} formules converties")
-            
-            # Store results
-            st.session_state.parsed_formulas = result
-            
-        except Exception as e:
-            st.error(f"Erreur: {str(e)}")
