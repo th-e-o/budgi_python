@@ -268,6 +268,146 @@ def get_main_styles() -> str:
             color: var(--primary);
             background: rgba(0, 85, 164, 0.1);
         }
+
+        /* Excel panel improvements for multi-section view */
+        .excel-panel, .excel-panel-full {
+            background: #f5f7fa;
+            border-radius: var(--radius-lg);
+            box-shadow: var(--shadow-sm);
+            overflow-y: auto;
+            overflow-x: hidden;
+            height: calc(100vh - 80px);
+            display: flex;
+            flex-direction: column;
+            margin-top: 0.5rem;
+        }
+        
+        /* Excel panel specific scrollbar styling */
+        .excel-panel::-webkit-scrollbar,
+        .excel-panel-full::-webkit-scrollbar {
+            width: 10px;
+        }
+        
+        .excel-panel::-webkit-scrollbar-track,
+        .excel-panel-full::-webkit-scrollbar-track {
+            background: var(--border-light);
+            border-radius: 5px;
+        }
+        
+        .excel-panel::-webkit-scrollbar-thumb,
+        .excel-panel-full::-webkit-scrollbar-thumb {
+            background: var(--primary);
+            border-radius: 5px;
+            opacity: 0.8;
+        }
+        
+        .excel-panel::-webkit-scrollbar-thumb:hover,
+        .excel-panel-full::-webkit-scrollbar-thumb:hover {
+            background: var(--primary-dark);
+            opacity: 1;
+        }
+        
+        /* Excel section styling */
+        .stExpander {
+            border: 1px solid var(--border) !important;
+            border-radius: var(--radius-lg) !important;
+            margin-bottom: 1rem !important;
+            background: var(--surface) !important;
+            box-shadow: var(--shadow-sm) !important;
+            transition: all var(--transition) !important;
+        }
+        
+        .stExpander:hover {
+            box-shadow: var(--shadow-md) !important;
+            transform: translateY(-1px) !important;
+        }
+        
+        .stExpander > div:first-child {
+            background: linear-gradient(to right, var(--border-light), transparent) !important;
+            border-radius: var(--radius-lg) var(--radius-lg) 0 0 !important;
+            padding: 1rem 1.5rem !important;
+            border-bottom: 1px solid var(--border) !important;
+            font-weight: 600 !important;
+            color: var(--text-primary) !important;
+        }
+        
+        .stExpander[aria-expanded="false"] > div:first-child {
+            border-radius: var(--radius-lg) !important;
+            border-bottom: none !important;
+            background: var(--border-light) !important;
+        }
+        
+        .stExpander[aria-expanded="false"]:hover > div:first-child {
+            background: linear-gradient(to right, rgba(0, 85, 164, 0.1), transparent) !important;
+        }
+        
+        .stExpander > div:last-child {
+            padding: 1.5rem !important;
+            background: var(--surface) !important;
+            border-radius: 0 0 var(--radius-lg) var(--radius-lg) !important;
+        }
+        
+        /* Section headers with icons */
+        .stExpander > div:first-child::before {
+            content: '▼';
+            margin-right: 0.5rem;
+            font-size: 0.8rem;
+            transition: transform var(--transition);
+            display: inline-block;
+        }
+        
+        .stExpander[aria-expanded="false"] > div:first-child::before {
+            content: '▶';
+            transform: none;
+        }
+        
+        /* Better visual hierarchy for sections */
+        .excel-panel .stExpander:nth-child(1) {
+            border-color: #3b82f6 !important;
+        }
+        
+        .excel-panel .stExpander:nth-child(2) {
+            border-color: #10b981 !important;
+        }
+        
+        .excel-panel .stExpander:nth-child(3) {
+            border-color: #f59e0b !important;
+        }
+        
+        /* Captions inside sections */
+        .stExpander .stCaption {
+            color: var(--text-secondary) !important;
+            font-style: italic !important;
+            margin-bottom: 1rem !important;
+        }
+        
+        /* Excel header improvement */
+        .excel-header {
+            background: var(--primary);
+            color: white;
+            padding: 1rem 1.5rem;
+            border-radius: var(--radius-lg) var(--radius-lg) 0 0;
+            margin: 0;
+            position: sticky;
+            top: 0;
+            z-index: 10;
+            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+        }
+        
+        .excel-header h3 {
+            margin: 0;
+            color: white;
+            font-size: 1.25rem;
+            font-weight: 600;
+        }
+        
+        /* Container inside excel panel for proper scrolling */
+        .excel-panel > div:not(.excel-header),
+        .excel-panel-full > div:not(.excel-header) {
+            flex: 1;
+            overflow-y: auto;
+            padding: 1rem;
+        }
         
         /* Clean Messages */
         .message-wrapper {

@@ -118,59 +118,43 @@ class MainLayout:
         st.markdown('</div>', unsafe_allow_html=True)
     
     def _render_excel_panel(self, on_tool_action: Callable, full_width: bool = False):
-        """Renders simplified Excel panel"""
+        """Renders Excel panel with all sections visible"""
         panel_class = "excel-panel-full" if full_width else "excel-panel"
         
-        st.markdown(f'<div class="{panel_class}">', unsafe_allow_html=True)
-        
-        # Simplified Excel header with fewer tabs
-        active_tab = st.session_state.get('excel_tab', 'data')
+        # Excel container with fixed header
         st.markdown(f"""
-        <div class="excel-header">
-            <h3>📊 Espace Excel</h3>
-            <div class="excel-tabs">
-                <button class="excel-tab {'active' if active_tab == 'data' else ''}" 
-                        onclick="window.setExcelTab('data')">Données</button>
-                <button class="excel-tab {'active' if active_tab == 'analysis' else ''}" 
-                        onclick="window.setExcelTab('analysis')">Extraction</button>
-                <button class="excel-tab {'active' if active_tab == 'tools' else ''}" 
-                        onclick="window.setExcelTab('tools')">BPSS</button>
+        <div class="{panel_class}">
+            <div class="excel-header">
+                <h3>📊 Espace Excel</h3>
+                <p style="margin: 0.5rem 0 0 0; opacity: 0.9; font-size: 0.875rem;">
+                    Gérez vos données, extrayez les informations budgétaires et utilisez l'outil BPSS
+                </p>
             </div>
         </div>
         """, unsafe_allow_html=True)
         
-        # Tab content
-        if active_tab == 'data':
-            self._render_excel_data_tab()
-        elif active_tab == 'analysis':
-            self._render_excel_analysis_tab(on_tool_action)
-        elif active_tab == 'tools':
-            self._render_excel_tools_tab(on_tool_action)
-        
-        st.markdown('</div>', unsafe_allow_html=True)
-        
-        # Tab switching JavaScript
-        st.markdown("""
-        <script>
-        window.setExcelTab = function(tab) {
-            const inputs = window.parent.document.querySelectorAll('input');
-            for (let input of inputs) {
-                if (input.getAttribute('aria-label') === 'excel_tab_input') {
-                    input.value = tab;
-                    input.dispatchEvent(new Event('input', { bubbles: true }));
-                    break;
-                }
-            }
-        };
-        </script>
-        """, unsafe_allow_html=True)
-        
-        # Hidden input for tab state
-        new_tab = st.text_input("excel_tab_input", value=active_tab,
-                               key="excel_tab_input", label_visibility="hidden")
-        if new_tab != active_tab:
-            st.session_state.excel_tab = new_tab
-            st.rerun()
+        # Create a scrollable container for all sections
+        with st.container():
+            # Section 1: Données
+            with st.expander("📂 **Données Excel**", expanded=True):
+                st.caption("Visualisez et éditez vos feuilles Excel")
+                self._render_excel_data_tab()
+            
+            # Add spacing between sections
+            st.markdown("<br>", unsafe_allow_html=True)
+            
+            # Section 2: Extraction et Analyse
+            with st.expander("🎯 **Extraction et Analyse Budgétaire**", expanded=True):
+                st.caption("Extrayez automatiquement les données budgétaires de vos documents")
+                self._render_excel_analysis_tab(on_tool_action)
+            
+            # Add spacing between sections
+            st.markdown("<br>", unsafe_allow_html=True)
+            
+            # Section 3: Outil BPSS
+            with st.expander("🛠️ **Outil BPSS - Mesures Catégorielles**", expanded=False):
+                st.caption("Traitez automatiquement vos fichiers PP-E-S, DPP18 et BUD45")
+                self._render_excel_tools_tab(on_tool_action)
     
     def _render_excel_data_tab(self):
         """Renders Excel data visualization tab - simplified"""

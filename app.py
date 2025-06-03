@@ -111,7 +111,6 @@ def init_session_state():
         'processed_files': set(),
         'temp_files': [],
         'layout_mode': 'chat',
-        'excel_tab': 'data',
     }
     
     # Initialiser les valeurs par défaut
