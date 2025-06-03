@@ -273,6 +273,65 @@ class MainLayout:
                 st.session_state.json_data = data
                 tags_count = len(data.get('tags', []))
                 st.success(f"✅ Configuration JSON chargée ({tags_count} cellules cibles)")
+                
+                # Afficher les options JSON
+                col1, col2 = st.columns(2)
+                with col1:
+                    if st.button("🔄 Actualiser labels depuis Excel", 
+                               help="Met à jour les labels du JSON avec le contenu des cellules sources",
+                               use_container_width=True):
+                        if st.session_state.get('excel_workbook'):
+                            with st.spinner("Actualisation en cours..."):
+                                updated_json, modifications = self.services['json_helper'].update_tags_from_excel(
+                                    st.session_state.json_data,
+                                    st.session_state.excel_workbook
+                                )
+                                st.session_state.json_data = updated_json
+                                
+                                if modifications:
+                                    st.success(f"✅ {len(modifications)} tags enrichis")
+                                    with st.expander("📋 Détails des modifications"):
+                                        for mod in modifications:
+                                            st.markdown(f"**{mod['sheet']}!{mod['cell']}** : +{len(mod['added_labels'])} labels")
+                                            for label in mod['added_labels']:
+                                                st.markdown(f"  • {label}")
+                                else:
+                                    st.info("ℹ️ Aucun nouveau label trouvé")
+                        else:
+                            st.warning("⚠️ Chargez d'abord un fichier Excel")
+                
+                with col2:
+                    # Export JSON modifié
+                    if st.button("💾 Exporter JSON modifié", use_container_width=True):
+                        json_str = self.services['json_helper'].export_json(st.session_state.json_data)
+                        st.download_button(
+                            "📥 Télécharger",
+                            data=json_str,
+                            file_name=f"config_updated_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json",
+                            mime="application/json",
+                            use_container_width=True
+                        )
+                
+                # Afficher un résumé des cellules sources
+                if st.checkbox("📊 Voir le résumé des cellules sources"):
+                    summary = self.services['json_helper'].get_source_cells_summary(st.session_state.json_data)
+                    if summary:
+                        for sheet, cells in summary.items():
+                            st.markdown(f"**{sheet}** : {len(cells)} cellules")
+                            with st.expander(f"Détails pour {sheet}"):
+                                st.markdown(", ".join(cells))
+                
+                # Afficher les labels extraits
+                if st.button("🏷️ Afficher tous les labels"):
+                    labels = self.services['json_helper'].extract_labels(st.session_state.json_data)
+                    st.markdown(f"### 🏷️ Labels uniques ({len(labels)})")
+                    if labels:
+                        # Créer un DataFrame pour un meilleur affichage
+                        labels_df = pd.DataFrame({"Labels": sorted(labels)})
+                        st.dataframe(labels_df, use_container_width=True, height=300)
+                    else:
+                        st.info("Aucun label trouvé")
+                        
             except Exception as e:
                 st.error(f"Erreur JSON: {str(e)}")
         
@@ -333,7 +392,7 @@ class MainLayout:
                 if st.button("💾 Sauvegarder les modifications", use_container_width=True):
                     st.session_state.extracted_data = edited_df.to_dict('records')
                     st.success("✅ Données mises à jour!")
-    
+
     def _render_excel_tools_tab(self, on_tool_action: Callable):
         """Renders simplified BPSS tool"""
         st.markdown("### 🛠️ Outil BPSS")
