@@ -5,6 +5,7 @@ from datetime import datetime
 from .components.chat import ChatComponents
 from .components.inputs import InputComponents
 import base64
+import time
 from pathlib import Path
 import pandas as pd
 
@@ -240,13 +241,27 @@ class MainLayout:
             wb = st.session_state.excel_workbook
             sheets = wb.sheetnames
             
+            # Initialiser la feuille sélectionnée si nécessaire
+            if 'selected_sheet' not in st.session_state and sheets:
+                st.session_state.selected_sheet = sheets[0]
+            
             col1, col2, col3, col4, col5 = st.columns([3, 1, 1, 1, 1])
             with col1:
+                # Utiliser une callback pour gérer le changement de feuille
+                def on_sheet_change():
+                    # Forcer le rechargement des données
+                    st.session_state.sheet_changed = True
+                    
                 selected_sheet = st.selectbox(
                     "Sélectionner une feuille",
                     sheets,
-                    key="sheet_selector_main"
+                    key="sheet_selector_main",
+                    index=sheets.index(st.session_state.selected_sheet) if st.session_state.selected_sheet in sheets else 0,
+                    on_change=on_sheet_change
                 )
+                
+                # Mettre à jour la feuille sélectionnée
+                st.session_state.selected_sheet = selected_sheet
 
             with col2:
                 # Toggle valeurs/formules
@@ -277,34 +292,114 @@ class MainLayout:
             # Display data
             if selected_sheet:
                 try:
+                    # Forcer le rechargement si la feuille a changé
+                    if st.session_state.get('sheet_changed', False):
+                        st.session_state.sheet_changed = False
+                        st.rerun()
+                    
                     df = self.services['excel_handler'].sheet_to_dataframe(
                         wb, 
                         selected_sheet,
                         show_formulas=(display_mode == "Formules")
-                    )                    
-                    # Simple info
-                    st.caption(f"📊 {len(df)} lignes × {len(df.columns)} colonnes")
+                    )
                     
-                    # Data editor
+                    # Assurer que le DataFrame a une taille minimale pour l'édition
+                    if df.empty or len(df) < 20 or len(df.columns) < 10:
+                        # Étendre le DataFrame
+                        min_rows = max(20, len(df))
+                        min_cols = max(10, len(df.columns))
+                        
+                        # Créer un nouveau DataFrame avec la taille minimale
+                        new_df = pd.DataFrame(index=range(min_rows), columns=range(min_cols))
+                        
+                        # Copier les données existantes
+                        if not df.empty:
+                            for i in range(min(len(df), min_rows)):
+                                for j in range(min(len(df.columns), min_cols)):
+                                    new_df.iloc[i, j] = df.iloc[i, j] if i < len(df) and j < len(df.columns) else None
+                        
+                        df = new_df
+                    
+                    # Simple info
+                    st.caption(f"📊 {selected_sheet} - {len(df)} lignes × {len(df.columns)} colonnes")
+                    
+                    # Créer une clé unique pour chaque combinaison feuille + mode
+                    editor_key = f"excel_editor_{selected_sheet}_{display_mode}_{id(wb)}"
+                    
+                    # Configuration du data editor
+                    column_config = {}
+                    for col in df.columns:
+                        column_config[col] = st.column_config.TextColumn(
+                            str(col),
+                            help=f"Colonne {col}",
+                            default="",
+                            max_chars=None,
+                            validate=None
+                        )
+                    
+                    # Data editor avec configuration améliorée
                     edited_df = st.data_editor(
                         df,
                         use_container_width=True,
                         height=400,
                         num_rows="dynamic",
-                        key=f"excel_editor_{selected_sheet}"
+                        key=editor_key,
+                        column_config=column_config,
+                        hide_index=False,
+                        disabled=False  # S'assurer que l'édition est activée
                     )
                     
-                    # Save button only if changes detected
-                    if not df.equals(edited_df):
-                        if st.button("💾 Sauvegarder les modifications", type="primary", use_container_width=True):
-                            self.services['excel_handler'].dataframe_to_sheet(
-                                edited_df, wb, selected_sheet
-                            )
-                            st.success("✅ Modifications sauvegardées!")
-                            st.rerun()
+                    # Bouton de sauvegarde toujours visible pour éviter les problèmes de détection
+                    col1, col2, col3 = st.columns([1, 2, 1])
+                    with col2:
+                        if st.button("💾 Sauvegarder les modifications", 
+                                type="primary", 
+                                use_container_width=True,
+                                key=f"save_btn_{selected_sheet}"):
+                            try:
+                                # Sauvegarder les modifications
+                                self.services['excel_handler'].dataframe_to_sheet(
+                                    edited_df, wb, selected_sheet
+                                )
+                                
+                                # Mettre à jour le workbook en session
+                                st.session_state.excel_workbook = wb
+                                
+                                # Sauvegarder dans un fichier temporaire pour recharger les valeurs
+                                import tempfile
+                                with tempfile.NamedTemporaryFile(suffix='.xlsx', delete=False) as tmp:
+                                    wb.save(tmp.name)
+                                    self.services['excel_handler'].current_path = tmp.name
+                                    st.session_state.temp_files.append(tmp.name)
+                                
+                                st.success(f"✅ Modifications sauvegardées dans {selected_sheet}!")
+                                
+                                # Forcer le rechargement
+                                time.sleep(0.5)  # Petit délai pour s'assurer que le fichier est écrit
+                                st.rerun()
+                                
+                            except Exception as e:
+                                st.error(f"❌ Erreur lors de la sauvegarde: {str(e)}")
+                                logger.error(f"Erreur sauvegarde: {str(e)}", exc_info=True)
+                    
+                    # Aide pour l'utilisateur
+                    with st.expander("💡 Aide pour l'édition"):
+                        st.markdown("""
+                        **Pour éditer les cellules :**
+                        - Double-cliquez sur une cellule pour la modifier
+                        - Utilisez Tab ou Enter pour naviguer
+                        - Cliquez sur "+" en bas pour ajouter des lignes
+                        - Cliquez sur "💾 Sauvegarder" pour enregistrer vos modifications
+                        
+                        **Note :** Si vous ne pouvez pas éditer, essayez de :
+                        1. Rafraîchir la page (F5)
+                        2. Cliquer sur une cellule vide et commencer à taper
+                        3. Utiliser le bouton "+" pour ajouter des lignes
+                        """)
                         
                 except Exception as e:
                     st.error(f"Erreur affichage: {str(e)}")
+                    logger.error(f"Erreur affichage feuille {selected_sheet}: {str(e)}", exc_info=True)
     
     def _render_excel_analysis_tab(self, on_tool_action: Callable):
         """Renders simplified analysis tab"""

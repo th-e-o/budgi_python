@@ -142,31 +142,60 @@ class ExcelHandler:
         
         if data:
             df = pd.DataFrame(data)
-            df = df.fillna('')
+            # Important: ne pas remplir avec des chaînes vides
+            # Cela permet l'édition dans toutes les cellules
             return df
         else:
-            return pd.DataFrame()
+            # IMPORTANT: Créer un DataFrame avec au moins quelques lignes et colonnes
+            # pour permettre l'édition dans Streamlit
+            min_rows = 20  # Nombre minimum de lignes
+            min_cols = 10  # Nombre minimum de colonnes
+            
+            # Obtenir les dimensions actuelles de la feuille
+            max_row = max(sheet.max_row, min_rows)
+            max_col = max(sheet.max_column, min_cols)
+            
+            # Créer un DataFrame avec des valeurs None (pas des chaînes vides)
+            df = pd.DataFrame(index=range(max_row), columns=range(max_col))
+            
+            return df
     
     def dataframe_to_sheet(self, df: pd.DataFrame, workbook: openpyxl.Workbook, 
-                          sheet_name: str, start_row: int = 1, start_col: int = 1):
+                        sheet_name: str, start_row: int = 1, start_col: int = 1):
         """Écrit un DataFrame dans une feuille"""
         if sheet_name in workbook.sheetnames:
             sheet = workbook[sheet_name]
         else:
             sheet = workbook.create_sheet(sheet_name)
         
-        # Écrire les données
+        # D'abord, effacer toutes les cellules existantes dans la plage
+        # pour éviter les données résiduelles
+        for row in sheet.iter_rows(min_row=start_row, max_row=start_row + len(df) - 1,
+                                min_col=start_col, max_col=start_col + len(df.columns) - 1):
+            for cell in row:
+                cell.value = None
+        
+        # Écrire les nouvelles données
         for r_idx, row in enumerate(df.values):
             for c_idx, value in enumerate(row):
                 try:
-                    # Avoid writing None values
-                    if value is not None and str(value) != 'nan':
-                        sheet.cell(row=start_row + r_idx, column=start_col + c_idx, value=value)
+                    # Écrire toutes les valeurs, y compris les cellules vides
+                    # pour s'assurer que les suppressions sont prises en compte
+                    if pd.notna(value) and str(value).strip() != '':
+                        # Convertir les valeurs pour éviter les problèmes de type
+                        if isinstance(value, (int, float)):
+                            sheet.cell(row=start_row + r_idx, column=start_col + c_idx, value=value)
+                        else:
+                            sheet.cell(row=start_row + r_idx, column=start_col + c_idx, value=str(value))
+                    else:
+                        # Explicitement mettre None pour les cellules vides
+                        sheet.cell(row=start_row + r_idx, column=start_col + c_idx, value=None)
+                        
                 except Exception as e:
                     logger.warning(f"Erreur écriture cellule ({start_row + r_idx}, {start_col + c_idx}): {str(e)}")
         
         logger.info(f"DataFrame écrit dans la feuille '{sheet_name}'")
-    
+        
     def get_sheet_info(self, workbook: openpyxl.Workbook) -> Dict[str, Any]:
         """Récupère les informations sur les feuilles du workbook"""
         info = {
