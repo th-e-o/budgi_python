@@ -339,205 +339,385 @@ class ExcelFormulaParser:
             formula_cell.python_code = f"# Error: {str(e)}"
     
     def _parse_formula(self, formula: str, current_sheet: str) -> str:
-        """Parse et convertit une formule Excel en Python"""
+        """Parse et convertit une formule Excel en Python - version refaite"""
         # Nettoyer la formule
         formula = formula.strip()
         
-        # Si c'est un nombre ou une chaîne
+        # Log pour debug
+        logger.debug(f"Parsing formula: '{formula}'")
+        
+        # Cas de base : constantes
+        if not formula:
+            return '""'
+        
+        # Nombres
         if self._is_number(formula):
+            return formula.replace(',', '.')  # Gérer les virgules décimales
+        
+        # Chaînes
+        if formula.startswith('"') and formula.endswith('"'):
             return formula
-        elif formula.startswith('"') and formula.endswith('"'):
-            return formula
-        elif formula in ['TRUE', 'FALSE']:
+        
+        # Booléens
+        if formula.upper() in ['TRUE', 'FALSE']:
             return formula.title()
         
-        # Gérer les pourcentages
-        if formula.endswith('%'):
-            num = formula[:-1]
-            if self._is_number(num):
-                return f"({num}/100)"
+        # Pourcentages
+        if formula.endswith('%') and self._is_number(formula[:-1]):
+            return f"({formula[:-1]}/100)"
         
-        # Chercher les opérateurs binaires (dans l'ordre de priorité inverse)
-        for ops in [['&'], ['+', '-'], ['*', '/'], ['=', '<>', '<=', '>=', '<', '>']]:
+        # Références de cellules (avant de chercher les fonctions!)
+        if self._is_cell_reference(formula):
+            return self._convert_cell_reference(formula, current_sheet)
+        
+        # Vérifier si c'est une fonction (doit avoir des parenthèses correspondantes)
+        # Pattern : NOM_FONCTION(...)
+        func_match = re.match(r'^([A-Z_][A-Z0-9_]*)\s*\(', formula, re.IGNORECASE)
+        if func_match:
+            # C'est potentiellement une fonction
+            func_name = func_match.group(1)
+            
+            # Trouver la parenthèse fermante correspondante
+            paren_start = func_match.end() - 1  # Position de la parenthèse ouvrante
+            paren_depth = 1
+            paren_end = paren_start
+            
+            for i in range(paren_start + 1, len(formula)):
+                if formula[i] == '(':
+                    paren_depth += 1
+                elif formula[i] == ')':
+                    paren_depth -= 1
+                    if paren_depth == 0:
+                        paren_end = i
+                        break
+            
+            if paren_depth == 0 and paren_end == len(formula) - 1:
+                # C'est une fonction complète
+                return self._parse_function(formula, current_sheet)
+        
+        # Si ce n'est pas une fonction, chercher les opérateurs
+        # Important : traiter les parenthèses d'abord
+        if formula.startswith('(') and formula.endswith(')'):
+            # Vérifier que les parenthèses sont bien appariées
+            depth = 0
+            for i, char in enumerate(formula):
+                if char == '(':
+                    depth += 1
+                elif char == ')':
+                    depth -= 1
+                    if depth == 0 and i < len(formula) - 1:
+                        # Les parenthèses ne sont pas englobantes
+                        break
+            
+            if depth == 0 and i == len(formula) - 1:
+                # Les parenthèses englobent toute l'expression
+                inner = formula[1:-1]
+                inner_parsed = self._parse_formula(inner, current_sheet)
+                return f"({inner_parsed})"
+        
+        # Chercher les opérateurs binaires (ordre de priorité)
+        # Plus basse priorité vers plus haute priorité
+        operator_groups = [
+            ['&'],                    # Concaténation
+            ['=', '<>', '<=', '>=', '<', '>'],  # Comparaisons
+            ['+', '-'],              # Addition, soustraction
+            ['*', '/'],              # Multiplication, division
+            ['^']                    # Puissance
+        ]
+        
+        for ops in operator_groups:
             result = self._try_split_binary(formula, ops, current_sheet)
             if result:
                 return result
         
-        # Si c'est une référence de cellule ou une plage
-        if self._is_cell_reference(formula):
-            return self._convert_cell_reference(formula, current_sheet)
-        
-        # Si c'est une fonction
-        if '(' in formula:
-            return self._parse_function(formula, current_sheet)
-        
-        # Sinon, c'est peut-être un nom défini
+        # Si c'est un nom défini
         if formula in self._named_ranges:
             return self._convert_cell_reference(self._named_ranges[formula], current_sheet)
         
-        # Par défaut
+        # Si on arrive ici, c'est quelque chose qu'on ne reconnaît pas
+        logger.warning(f"Unrecognized formula element: '{formula}'")
         return f'"{formula}"'
     
     def _is_number(self, s: str) -> bool:
         """Vérifie si une chaîne est un nombre"""
         try:
-            float(s)
+            # Gérer les nombres avec virgule comme séparateur décimal
+            s_normalized = s.replace(',', '.')
+            float(s_normalized)
             return True
         except ValueError:
             return False
-    
+        
     def _is_cell_reference(self, s: str) -> bool:
         """Vérifie si c'est une référence de cellule"""
+        # Enlever les $ pour la vérification
+        s_clean = s.replace('$', '')
+        
         # Simple référence A1 ou plage A1:B2
-        if re.match(r'^[A-Z]+\d+(?::[A-Z]+\d+)?$', s):
+        if re.match(r'^[A-Z]+\d+(?::[A-Z]+\d+)?$', s_clean, re.IGNORECASE):
             return True
         # Avec feuille Sheet!A1 ou 'Sheet'!A1
-        if re.match(r"^(?:'[^']+'|[A-Za-z0-9_]+)![A-Z]+\d+(?::[A-Z]+\d+)?$", s):
+        if re.match(r"^(?:'[^']+'|[A-Za-z0-9_]+)![A-Z]+\d+(?::[A-Z]+\d+)?$", s_clean, re.IGNORECASE):
             return True
         return False
     
     def _try_split_binary(self, formula: str, operators: List[str], current_sheet: str) -> Optional[str]:
-        """Essaie de diviser la formule sur un opérateur binaire"""
-        # Parser en respectant les parenthèses et les guillemets
+        """Divise sur un opérateur binaire en respectant les parenthèses"""
         depth = 0
         in_string = False
         quote_char = None
         
-        for i in range(len(formula)):
+        # Parcourir de droite à gauche pour respecter l'associativité
+        for i in range(len(formula) - 1, -1, -1):
             char = formula[i]
             
-            # Gestion des chaînes
-            if not in_string and char in ['"', "'"]:
-                in_string = True
-                quote_char = char
-            elif in_string and char == quote_char:
-                # Vérifier si c'est un guillemet échappé
-                if i + 1 < len(formula) and formula[i + 1] == quote_char:
-                    continue
-                in_string = False
-                quote_char = None
-            elif in_string:
+            # Gestion des chaînes (à l'envers)
+            if not in_string:
+                if char in ['"', "'"]:
+                    # Vérifier que ce n'est pas échappé
+                    if i > 0 and formula[i-1] != '\\':
+                        in_string = True
+                        quote_char = char
+            else:
+                if char == quote_char and (i == 0 or formula[i-1] != '\\'):
+                    in_string = False
+                    quote_char = None
                 continue
             
             # Gestion des parenthèses
-            if char == '(':
+            if char == ')':
                 depth += 1
-            elif char == ')':
+            elif char == '(':
                 depth -= 1
             
-            # Si on est au niveau racine, chercher les opérateurs
+            # Si on est au niveau racine
             if depth == 0 and not in_string:
                 for op in operators:
-                    if formula[i:i+len(op)] == op:
-                        left = formula[:i].strip()
-                        right = formula[i+len(op):].strip()
+                    # Vérifier si l'opérateur est présent à cette position
+                    if i >= len(op) - 1 and formula[i - len(op) + 1:i + 1] == op:
+                        # Vérifier que ce n'est pas partie d'un autre opérateur
+                        if op in ['<', '>'] and i < len(formula) - 1 and formula[i + 1] == '=':
+                            continue
+                        
+                        left = formula[:i - len(op) + 1].strip()
+                        right = formula[i + 1:].strip()
                         
                         if left and right:
                             left_py = self._parse_formula(left, current_sheet)
                             right_py = self._parse_formula(right, current_sheet)
                             
-                            # Mapper les opérateurs Excel vers Python
+                            # Convertir l'opérateur
                             if op == '&':
                                 return f'str({left_py}) + str({right_py})'
                             elif op == '<>':
-                                return f'{left_py} != {right_py}'
+                                return f'({left_py} != {right_py})'
                             elif op == '=':
-                                return f'{left_py} == {right_py}'
+                                return f'({left_py} == {right_py})'
+                            elif op == '^':
+                                return f'({left_py} ** {right_py})'
                             else:
-                                return f'{left_py} {op} {right_py}'
+                                return f'({left_py} {op} {right_py})'
         
         return None
     
     def _parse_function(self, formula: str, current_sheet: str) -> str:
-        """Parse une fonction Excel"""
-        match = re.match(r'^([A-Z]+)\((.*)\)$', formula, re.IGNORECASE)
-        if not match:
-            return f'# Invalid function: {formula}'
+        """Parse une fonction Excel - version améliorée pour expressions complexes"""
+        # Gérer les espaces
+        formula = formula.strip()
         
-        func_name = match.group(1).upper()
-        args_str = match.group(2)
+        # Trouver le nom de la fonction et les parenthèses
+        paren_pos = formula.find('(')
+        if paren_pos == -1:
+            return f'# No parentheses in function: {formula}'
+        
+        func_name = formula[:paren_pos].strip().upper()
+        
+        # Vérifier que les parenthèses sont équilibrées
+        if not formula.endswith(')'):
+            return f'# Unbalanced parentheses: {formula}'
+        
+        # Extraire le contenu entre parenthèses
+        args_str = formula[paren_pos + 1:-1]
         
         # Parser les arguments
-        args = self._split_arguments(args_str)
+        try:
+            args = self._split_arguments(args_str)
+        except Exception as e:
+            logger.error(f"Error splitting arguments for {func_name}: {str(e)}")
+            return f'# Error parsing arguments: {formula}'
+        
+        # Debug pour voir ce qui se passe
+        logger.debug(f"Function {func_name} with {len(args)} arguments")
+        for i, arg in enumerate(args):
+            logger.debug(f"  Arg {i}: '{arg}'")
         
         # Convertir chaque argument
         converted_args = []
-        for arg in args:
-            converted_args.append(self._parse_formula(arg.strip(), current_sheet))
+        for i, arg in enumerate(args):
+            try:
+                # Pour debug
+                logger.debug(f"Converting arg {i} of {func_name}: '{arg}'")
+                converted = self._parse_formula(arg.strip(), current_sheet)
+                logger.debug(f"  -> '{converted}'")
+                converted_args.append(converted)
+            except Exception as e:
+                logger.error(f"Error converting argument {i} of {func_name}: {arg}")
+                logger.error(f"  Error: {str(e)}")
+                converted_args.append(f"# Error: {arg}")
         
         # Utiliser le convertisseur approprié
         if func_name in self._formula_converters:
-            return self._formula_converters[func_name](converted_args, current_sheet, args)
+            try:
+                result = self._formula_converters[func_name](converted_args, current_sheet, args)
+                logger.debug(f"Converted {func_name} to: {result}")
+                return result
+            except Exception as e:
+                logger.error(f"Error in converter for {func_name}: {str(e)}")
+                return f"# Error converting {func_name}: {str(e)}"
         else:
-            # Fonction non supportée, essayer un appel générique
+            # Fonction non supportée
+            logger.warning(f"Unsupported function: {func_name}")
+            # Pour les fonctions non supportées, retourner un appel générique
             return f"{func_name.lower()}({', '.join(converted_args)})"
     
     def _split_arguments(self, args_str: str) -> List[str]:
-        """Divise les arguments d'une fonction en respectant les parenthèses"""
-        if not args_str:
+        """Divise les arguments d'une fonction - version robuste"""
+        if not args_str.strip():
             return []
         
         args = []
         current_arg = ""
-        depth = 0
+        paren_depth = 0
+        bracket_depth = 0
         in_string = False
         quote_char = None
+        i = 0
         
-        for char in args_str:
+        while i < len(args_str):
+            char = args_str[i]
+            
+            # Gestion des chaînes
             if not in_string and char in ['"', "'"]:
                 in_string = True
                 quote_char = char
+                current_arg += char
             elif in_string and char == quote_char:
-                in_string = False
-                quote_char = None
+                # Vérifier si c'est échappé
+                if i + 1 < len(args_str) and args_str[i + 1] == quote_char:
+                    current_arg += char + args_str[i + 1]
+                    i += 1
+                else:
+                    in_string = False
+                    quote_char = None
+                    current_arg += char
             elif not in_string:
+                # Gestion des parenthèses et crochets
                 if char == '(':
-                    depth += 1
+                    paren_depth += 1
                 elif char == ')':
-                    depth -= 1
-                elif char == ',' and depth == 0:
-                    args.append(current_arg)
+                    paren_depth -= 1
+                elif char == '[':
+                    bracket_depth += 1
+                elif char == ']':
+                    bracket_depth -= 1
+                elif char == ',' and paren_depth == 0 and bracket_depth == 0:
+                    # C'est un séparateur d'arguments
+                    args.append(current_arg.strip())
                     current_arg = ""
+                    i += 1
                     continue
+                
+                current_arg += char
+            else:
+                current_arg += char
             
-            current_arg += char
+            i += 1
         
-        if current_arg:
-            args.append(current_arg)
+        # Ajouter le dernier argument
+        if current_arg.strip():
+            args.append(current_arg.strip())
         
         return args
     
-    def _convert_cell_reference(self, ref: str, current_sheet: str) -> str:
-        """Convertit une référence de cellule Excel en code Python"""
-        # Gérer les références avec feuille
-        sheet = current_sheet
-        cell_part = ref
         
-        if '!' in ref:
-            sheet_part, cell_part = ref.split('!', 1)
-            sheet = sheet_part.strip("'")
+        if current_arg.strip():
+            args.append(current_arg.strip())
         
-        # Si c'est une plage
-        if ':' in cell_part:
-            start, end = cell_part.split(':')
-            return self._convert_range_reference(start, end, sheet)
-        
-        # Référence simple
-        match = re.match(r'^([A-Z]+)(\d+)$', cell_part)
-        if match:
-            col_str, row_str = match.groups()
-            col = self.excel_col_to_num(col_str)
-            row = int(row_str)
-            
-            if sheet == current_sheet:
-                return f"ws.iloc[{row-1}, {col-1}]"
-            else:
-                return f"sheets['{sheet}'].iloc[{row-1}, {col-1}]"
-        
-        return f"# Invalid ref: {ref}"
+        return args
     
+    def _safe_cell_access(self, df: pd.DataFrame, row: int, col: int):
+        """Accès sécurisé à une cellule du DataFrame"""
+        try:
+            if row < 0 or col < 0:
+                return None
+            if row >= len(df) or col >= len(df.columns):
+                return None
+            return df.iloc[row, col]
+        except:
+            return None
+
+    def _safe_range_access(self, df: pd.DataFrame, row1: int, col1: int, row2: int, col2: int):
+        """Accès sécurisé à une plage du DataFrame"""
+        try:
+            # S'assurer que les indices sont dans les limites
+            row1 = max(0, min(row1, len(df) - 1))
+            row2 = max(0, min(row2, len(df) - 1))
+            col1 = max(0, min(col1, len(df.columns) - 1))
+            col2 = max(0, min(col2, len(df.columns) - 1))
+            
+            # S'assurer que row1 <= row2 et col1 <= col2
+            if row1 > row2:
+                row1, row2 = row2, row1
+            if col1 > col2:
+                col1, col2 = col2, col1
+                
+            return df.iloc[row1:row2+1, col1:col2+1]
+        except:
+            return pd.DataFrame()
+
+    def _convert_cell_reference(self, ref: str, current_sheet: str) -> str:
+        """Convertit une référence de cellule - version avec safe_cell"""
+        try:
+            # Enlever les $ pour le traitement
+            ref_clean = ref.replace('$', '')
+            
+            # Gérer les références avec feuille
+            sheet = current_sheet
+            cell_part = ref_clean
+            
+            if '!' in ref_clean:
+                sheet_part, cell_part = ref_clean.split('!', 1)
+                sheet = sheet_part.strip("'")
+            
+            # Si c'est une plage
+            if ':' in cell_part:
+                start, end = cell_part.split(':')
+                return self._convert_range_reference(start, end, sheet)
+            
+            # Référence simple
+            match = re.match(r'^([A-Z]+)(\d+)$', cell_part, re.IGNORECASE)
+            if match:
+                col_str, row_str = match.groups()
+                col = self.excel_col_to_num(col_str)
+                row = int(row_str)
+                
+                # S'assurer que les indices sont valides
+                if row < 1 or col < 1:
+                    return "0"
+                
+                # Utiliser safe_cell pour un accès robuste
+                if sheet == current_sheet:
+                    return f"safe_cell(ws, {row-1}, {col-1})"
+                else:
+                    return f"safe_cell(sheets['{sheet}'], {row-1}, {col-1})"
+            
+            return "0"
+        
+        except Exception as e:
+            return "0"
+        
     def _convert_range_reference(self, start: str, end: str, sheet: str) -> str:
-        """Convertit une plage Excel en slice Python"""
+        """Convertit une plage Excel en slice Python - version sécurisée"""
         start_match = re.match(r'^([A-Z]+)(\d+)$', start)
         end_match = re.match(r'^([A-Z]+)(\d+)$', end)
         
@@ -547,41 +727,91 @@ class ExcelFormulaParser:
             end_col = self.excel_col_to_num(end_match.group(1))
             end_row = int(end_match.group(2))
             
-            return f"sheets['{sheet}'].iloc[{start_row-1}:{end_row}, {start_col-1}:{end_col}]"
+            # Ajuster les indices (Excel est 1-based, Python est 0-based)
+            start_row -= 1
+            start_col -= 1
+            end_row -= 1
+            end_col -= 1
+            
+            # S'assurer que les indices sont positifs
+            if any(x < 0 for x in [start_row, start_col, end_row, end_col]):
+                return f"# Invalid range (negative indices): {start}:{end}"
+            
+            return f"sheets['{sheet}'].iloc[{start_row}:{end_row+1}, {start_col}:{end_col+1}]"
         
         return f"# Invalid range: {start}:{end}"
-    
     # Convertisseurs de fonctions
     def _convert_sum(self, args: List[str], current_sheet: str, raw_args: List[str]) -> str:
-        if len(args) == 1:
-            return f"np.nansum({args[0]})"
+        """Convertit SUM - version simplifiée avec helpers"""
+        if len(args) == 0:
+            return "0"
+        elif len(args) == 1:
+            arg = args[0]
+            # Vérifier si c'est une plage
+            if ".iloc[" in arg and ":" in arg:
+                return f"safe_sum_range({arg})"
+            else:
+                # C'est une cellule unique, déjà convertie par safe_cell
+                return arg
         else:
-            return f"np.nansum([{', '.join(args)}])"
-    
+            # Plusieurs arguments
+            sum_parts = []
+            for arg in args:
+                if ".iloc[" in arg and ":" in arg:
+                    # C'est une plage
+                    sum_parts.append(f"safe_sum_range({arg})")
+                else:
+                    # C'est une cellule unique
+                    sum_parts.append(arg)
+            
+            # Simple addition
+            return f"({' + '.join(sum_parts)})"
+
     def _convert_average(self, args: List[str], current_sheet: str, raw_args: List[str]) -> str:
-        if len(args) == 1:
-            return f"np.nanmean({args[0]})"
+        """Convertit AVERAGE - version corrigée pour plages multiples"""
+        if len(args) == 0:
+            return "np.nan"
+        elif len(args) == 1:
+            arg = args[0]
+            if ".iloc[" in arg and ":" in arg:
+                return f"np.nanmean({arg}.values)"
+            else:
+                return f"({arg} if not pd.isna({arg}) else np.nan)"
         else:
-            return f"np.nanmean([{', '.join(args)}])"
-    
+            # Pour plusieurs arguments, il faut collecter toutes les valeurs
+            values_parts = []
+            for arg in args:
+                if ".iloc[" in arg and ":" in arg:
+                    values_parts.append(f"{arg}.values.flatten()")
+                else:
+                    values_parts.append(f"[{arg}]")
+            
+            return f"np.nanmean(np.concatenate([{', '.join(values_parts)}]))"
+
     def _convert_max(self, args: List[str], current_sheet: str, raw_args: List[str]) -> str:
-        if len(args) == 1:
-            return f"np.nanmax({args[0]})"
+        """Convertit MAX - version ultra simple"""
+        if len(args) == 0:
+            return "0"
         else:
-            return f"np.nanmax([{', '.join(args)}])"
-    
+            # MAX prend simplement le maximum
+            return f"max([{', '.join(args)}])"
+
     def _convert_min(self, args: List[str], current_sheet: str, raw_args: List[str]) -> str:
-        if len(args) == 1:
-            return f"np.nanmin({args[0]})"
+        """Convertit MIN - version simple"""
+        if len(args) == 0:
+            return "0"
         else:
-            return f"np.nanmin([{', '.join(args)}])"
-    
+            return f"min([{', '.join(args)}])"
+        
     def _convert_count(self, args: List[str], current_sheet: str, raw_args: List[str]) -> str:
         if len(args) == 1:
-            return f"np.count_nonzero(~np.isnan({args[0]}.values.flatten()))"
+            if ".iloc[" in args[0] and ":" in args[0]:
+                return f"np.count_nonzero(~pd.isna({args[0]}.values))"
+            else:
+                return f"(0 if pd.isna({args[0]}) else 1)"
         else:
             return f"sum(not pd.isna(x) for x in [{', '.join(args)}])"
-    
+        
     def _convert_counta(self, args: List[str], current_sheet: str, raw_args: List[str]) -> str:
         if len(args) == 1:
             return f"np.count_nonzero({args[0]}.values.flatten() != '')"
@@ -606,19 +836,23 @@ class ExcelFormulaParser:
             return "# Invalid IF"
     
     def _convert_sumif(self, args: List[str], current_sheet: str, raw_args: List[str]) -> str:
-        """Convertit SUMIF - basé sur la logique R"""
         if len(args) < 2:
             return "# SUMIF requires at least 2 arguments"
         
         range_arg = args[0]
-        criteria_raw = raw_args[1].strip()
+        criteria = args[1]
         sum_range = args[2] if len(args) >= 3 else range_arg
         
-        # Analyser le critère
-        criteria_code = self._convert_sumif_criteria(criteria_raw, range_arg, current_sheet)
+        # Simplifier le critère
+        if criteria.startswith('"') and criteria.endswith('"'):
+            criteria_value = criteria[1:-1]
+            return f"np.nansum({sum_range}.values[{range_arg}.values == '{criteria_value}'])"
+        elif self._is_number(criteria):
+            return f"np.nansum({sum_range}.values[{range_arg}.values == {criteria}])"
+        else:
+            # Critère plus complexe
+            return f"np.nansum({sum_range}.values[{range_arg}.values == {criteria}])"
         
-        return f"np.nansum({sum_range}.values[{criteria_code}])"
-    
     def _convert_sumif_criteria(self, criteria: str, range_ref: str, current_sheet: str) -> str:
         """Convertit un critère SUMIF en condition Python"""
         criteria = criteria.strip()
@@ -791,7 +1025,7 @@ class ExcelFormulaParser:
         if len(args) >= 2:
             return f"({args[0]} % {args[1]})"
         return "# Invalid MOD"
-    
+
     def _generate_python_script(self, formulas: List[FormulaCell], original_file: str) -> str:
         """Génère un script Python pour appliquer les formules"""
         script_name = original_file.replace('.xlsx', '_formulas.py')
@@ -804,6 +1038,53 @@ import openpyxl
 from datetime import datetime
 
 # Helper functions
+def safe_get_numeric(value, default=0):
+    \"\"\"Convertit une valeur en nombre de manière sûre\"\"\"
+    if value is None:
+        return default
+    if isinstance(value, (int, float)):
+        return value
+    if isinstance(value, str):
+        # Si c'est une formule Excel, retourner default
+        if value.startswith('='):
+            return default
+        # Essayer de convertir
+        try:
+            # Gérer les virgules comme séparateurs décimaux
+            cleaned = value.replace(',', '.').replace(' ', '')
+            return float(cleaned) if cleaned else default
+        except:
+            return default
+    # Pour tout autre type
+    try:
+        return float(value)
+    except:
+        return default
+
+def safe_sum_range(df_range):
+    \"\"\"Somme sûre d'une plage de DataFrame\"\"\"
+    if df_range is None:
+        return 0
+    try:
+        # Aplatir et convertir en numérique
+        values = df_range.values.flatten()
+        numeric_values = [safe_get_numeric(v) for v in values]
+        return sum(numeric_values)
+    except:
+        return 0
+
+def safe_cell(df, row, col, default=0):
+    \"\"\"Accès sûr à une cellule\"\"\"
+    try:
+        if row < 0 or col < 0:
+            return default
+        if row >= len(df) or col >= len(df.columns):
+            return default
+        value = df.iloc[row, col]
+        return safe_get_numeric(value, default)
+    except:
+        return default
+
 def vlookup(lookup_value, table_array, col_index, range_lookup=True):
     \"\"\"VLOOKUP implementation\"\"\"
     try:
@@ -909,26 +1190,64 @@ if __name__ == "__main__":
         return script_name
 
     def apply_formulas_to_workbook(self, workbook: openpyxl.Workbook, 
-                                  formulas: List[FormulaCell]) -> openpyxl.Workbook:
-        """Applique directement les formules au workbook"""
-        # Charger toutes les feuilles en DataFrames
+                                formulas: List[FormulaCell]) -> openpyxl.Workbook:
+        """Applique les formules au workbook avec gestion robuste des types"""
+        
+        # Charger toutes les feuilles en DataFrames avec conversion appropriée
         sheets = {}
         for sheet_name in workbook.sheetnames:
             sheet = workbook[sheet_name]
             data = []
-            for row in sheet.iter_rows(values_only=True):
-                data.append(list(row))
+            
+            for row in sheet.iter_rows():
+                row_data = []
+                for cell in row:
+                    value = cell.value
+                    
+                    # Si c'est une formule, essayer d'obtenir la valeur calculée
+                    if isinstance(value, str) and value.startswith('='):
+                        # Pour les formules, mettre 0 par défaut
+                        row_data.append(0)
+                    elif value is None:
+                        row_data.append(0)  # Remplacer None par 0
+                    elif isinstance(value, (int, float)):
+                        row_data.append(value)
+                    elif isinstance(value, str):
+                        # Essayer de convertir en nombre
+                        try:
+                            # Gérer les formats européens (virgule comme séparateur décimal)
+                            cleaned = value.replace(' ', '').replace(',', '.')
+                            if cleaned.replace('.', '').replace('-', '').replace('+', '').isdigit():
+                                row_data.append(float(cleaned))
+                            else:
+                                # Si ce n'est pas un nombre, mettre 0
+                                row_data.append(0)
+                        except:
+                            row_data.append(0)
+                    else:
+                        # Pour tout autre type, convertir ou mettre 0
+                        try:
+                            row_data.append(float(value))
+                        except:
+                            row_data.append(0)
+                
+                data.append(row_data)
+            
+            # Créer le DataFrame
             sheets[sheet_name] = pd.DataFrame(data) if data else pd.DataFrame()
         
-        # Créer un environnement d'exécution
+        # Créer l'environnement d'exécution avec helpers inline
         exec_globals = {
             'sheets': sheets,
             'np': np,
             'pd': pd,
             'datetime': datetime,
-            'vlookup': self._vlookup_impl,
-            'match_index': self._match_index_impl,
-            'substitute': self._substitute_impl,
+            'vlookup': ExcelFormulaParser._vlookup_impl,
+            'match_index': ExcelFormulaParser._match_index_impl,
+            'substitute': ExcelFormulaParser._substitute_impl,
+            # Ajouter des fonctions helper inline
+            'safe_value': lambda x: 0 if (x is None or pd.isna(x) or (isinstance(x, str) and x.startswith('='))) else x,
+            'safe_div': lambda a, b: a / b if b != 0 else 0,
         }
 
         # Trier les formules par dépendances
@@ -937,6 +1256,7 @@ if __name__ == "__main__":
         # Appliquer chaque formule
         success_count = 0
         error_count = 0
+        errors_list = []
         
         for formula in formulas:
             if formula.python_code and not formula.error:
@@ -947,30 +1267,62 @@ if __name__ == "__main__":
                     # Évaluer la formule
                     result = eval(formula.python_code, exec_globals, exec_locals)
                     
-                    # Gérer les résultats pandas (Series, DataFrame)
-                    if isinstance(result, pd.Series):
-                        result = result.iloc[0] if len(result) > 0 else None
-                    elif isinstance(result, pd.DataFrame):
-                        result = result.iloc[0, 0] if result.size > 0 else None
+                    # IMPORTANT : Vérifier et convertir le résultat avant de l'écrire
+    
+                    # Si le résultat est None, le remplacer par 0 ou une chaîne vide
+                    if result is None:
+                        logger.warning(f"Formula {formula.sheet}!{formula.address} returned None")
+                        result = 0  # ou "" selon le contexte
+
+                    # Gérer les différents types de résultats
+                    if isinstance(result, pd.DataFrame):
+                        if result.size == 0:
+                            result = 0
+                        elif result.size == 1:
+                            result = result.iloc[0, 0]
+                        else:
+                            # Pour un DataFrame multi-valeurs, prendre la première valeur
+                            result = result.iloc[0, 0] if result.shape[1] > 0 else 0
+                            
+                    elif isinstance(result, pd.Series):
+                        if len(result) == 0:
+                            result = 0
+                        elif len(result) == 1:
+                            result = result.iloc[0]
+                        else:
+                            result = result.iloc[0]
+                            
                     elif isinstance(result, np.ndarray):
-                        result = result.item() if result.size == 1 else result[0] if result.size > 0 else None
+                        if result.size == 0:
+                            result = 0
+                        elif result.size == 1:
+                            result = result.item()
+                        else:
+                            result = result.flat[0]
+                    
+                    # S'assurer que le résultat n'est pas None après conversion
+                    if result is None:
+                        result = 0
+
+                    # Pour les résultats NaN, les convertir en 0 ou laisser vide
+                    if isinstance(result, (int, float)) and np.isnan(result):
+                        result = 0  # ou None selon le besoin
+                    
+                    # Vérifier le type avant d'écrire
+                    if isinstance(result, (list, tuple, dict, set)):
+                        logger.error(f"Formula {formula.sheet}!{formula.address} returned non-scalar type: {type(result)}")
+                        result = str(result)  # Convertir en string pour éviter l'erreur
 
                     # Mettre à jour le workbook
                     sheet = workbook[formula.sheet]
                     cell = sheet.cell(row=formula.row, column=formula.col)
-                    
-                    # Conserver la formule originale et stocker la valeur calculée
-                    if cell.value and isinstance(cell.value, str) and cell.value.startswith('='):
-                        # Garder la formule, mais forcer la valeur calculée
-                        cell._value = cell.value  # Garder la formule
-                        cell.data_type = 'f'  # Type formule
-                        
-                        # Créer une cellule temporaire pour stocker la valeur
-                        # Note: openpyxl ne permet pas facilement de stocker formule + valeur
-                        # On va donc écrire directement la valeur
-                        cell.value = result
-                    else:
-                        cell.value = result
+
+                    # IMPORTANT : S'assurer que la valeur est compatible avec openpyxl
+                    # openpyxl accepte : int, float, str, bool, datetime, None
+                    if not isinstance(result, (int, float, str, bool, type(None))):
+                        result = str(result)
+    
+                    cell.value = result
 
                     # Mettre à jour le DataFrame aussi pour les calculs suivants
                     sheets[formula.sheet].iloc[formula.row-1, formula.col-1] = result
@@ -981,8 +1333,19 @@ if __name__ == "__main__":
                 except Exception as e:
                     formula.error = f"Erreur de calcul: {str(e)}"
                     error_count += 1
+                    errors_list.append({
+                        'cell': f"{formula.sheet}!{formula.address}",
+                        'formula': formula.formula,
+                        'error': str(e),
+                        'python_code': formula.python_code
+                    })
                     logger.error(f"Erreur dans {formula.sheet}!{formula.address}: {str(e)}")
                     logger.debug(f"Code Python: {formula.python_code}")
+        # Stocker les erreurs dans session_state pour l'affichage
+        import streamlit as st
+        if 'formula_errors' not in st.session_state:
+            st.session_state.formula_errors = []
+        st.session_state.formula_errors = errors_list
         
         logger.info(f"Formules appliquées: {success_count} succès, {error_count} erreurs")
         return workbook

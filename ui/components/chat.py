@@ -137,4 +137,3 @@ class ChatComponents:
             </div>
         </div>
         """
-    

@@ -410,6 +410,7 @@ class MainLayout:
                         formulas = st.session_state.parsed_formulas
                         stats = formulas.get('statistics', {})
                         
+                        st.markdown("---")
                         st.markdown("### 📊 Résultats du parsing des formules")
                         
                         # Métriques de synthèse
@@ -423,7 +424,7 @@ class MainLayout:
                         
                         # Détails des erreurs si présentes
                         if st.session_state.get('formula_errors'):
-                            with st.expander("⚠️ Détails des erreurs", expanded=False):
+                            if st.checkbox("⚠️ Afficher les détails des erreurs", key="show_formula_errors"):
                                 for err in st.session_state.formula_errors[:10]:
                                     st.error(f"**{err['cell']}**: {err['error']}")
                                     if 'formula' in err:
@@ -433,7 +434,7 @@ class MainLayout:
                         
                         # Exemples de formules converties si disponibles
                         if formulas.get('formulas'):
-                            with st.expander("🔍 Exemples de formules converties", expanded=False):
+                            if st.checkbox("🔍 Afficher des exemples de formules converties", key="show_formula_examples"):
                                 examples = [f for f in formulas['formulas'] if f.python_code and not f.error][:5]
                                 for f in examples:
                                     st.markdown(f"**{f.sheet}!{f.address}**")
@@ -452,15 +453,18 @@ class MainLayout:
                         
                         # Bouton pour télécharger le script Python généré
                         if formulas.get('script_file'):
-                            with open(formulas['script_file'], 'r') as f:
-                                script_content = f.read()
-                            st.download_button(
-                                "📥 Télécharger le script Python",
-                                data=script_content,
-                                file_name="excel_formulas.py",
-                                mime="text/x-python",
-                                help="Script Python généré pour appliquer les formules"
-                            )
+                            try: 
+                                with open(formulas['script_file'], 'r') as f:
+                                    script_content = f.read()
+                                st.download_button(
+                                    "📥 Télécharger le script Python",
+                                    data=script_content,
+                                    file_name="excel_formulas.py",
+                                    mime="text/x-python",
+                                    help="Script Python généré pour appliquer les formules"
+                                )
+                            except FileNotFoundError:
+                                st.warning("Le fichier de script n'est plus disponible")
                         
                 except Exception as e:
                     st.error(f"Erreur affichage: {str(e)}")
