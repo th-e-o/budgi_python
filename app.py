@@ -647,19 +647,20 @@ def apply_excel_formulas():
                         error_types[error_type].append(err)
                 
                 # Afficher les erreurs groupées
-                with st.expander("📋 Détails des erreurs", expanded=True):
-                    for error_type, errors in error_types.items():
-                        st.write(f"**{error_type}** ({len(errors)} erreurs)")
-                        
-                        # Afficher quelques exemples
-                        for err in errors[:3]:
-                            st.error(f"**{err['cell']}**: {err['formula']}")
-                            st.caption(f"Erreur: {err['error'][:100]}...")
-                            if st.session_state.get('debug_mode'):
-                                st.code(f"Code généré: {err.get('python_code', 'N/A')}", language="python")
-                        
-                        if len(errors) > 3:
-                            st.caption(f"... et {len(errors) - 3} autres erreurs de ce type")
+                st.markdown("### 📋 Détails des erreurs")
+                for error_type, errors in error_types.items():
+                    st.markdown(f"**{error_type}** ({len(errors)} erreurs)")
+                    
+                    # Afficher quelques exemples
+                    for err in errors[:3]:
+                        st.error(f"**{err['cell']}**: {err['formula']}")
+                        st.caption(f"Erreur: {err['error'][:100]}...")
+                        if st.session_state.get('debug_mode'):
+                            st.code(f"Code généré: {err.get('python_code', 'N/A')}", language="python")
+                    
+                    if len(errors) > 3:
+                        st.caption(f"... et {len(errors) - 3} autres erreurs de ce type")
+                
                 
                 # Suggestions de correction
                 st.info("""
@@ -683,85 +684,6 @@ def apply_excel_formulas():
             if st.session_state.get('debug_mode'):
                 import traceback
                 st.code(traceback.format_exc(), language="python")
-
-    def apply_formulas_to_workbook(self, workbook: openpyxl.Workbook, 
-                                  formulas: List[FormulaCell]) -> openpyxl.Workbook:
-        """Applique directement les formules au workbook"""
-        # Charger toutes les feuilles en DataFrames
-        sheets = {}
-        for sheet_name in workbook.sheetnames:
-            sheet = workbook[sheet_name]
-            data = []
-            for row in sheet.iter_rows(values_only=True):
-                data.append(list(row))
-            sheets[sheet_name] = pd.DataFrame(data) if data else pd.DataFrame()
-        
-        # Créer un environnement d'exécution
-        exec_globals = {
-            'sheets': sheets,
-            'np': np,
-            'pd': pd,
-            'datetime': datetime,
-            'vlookup': self._vlookup_impl,
-            'match_index': self._match_index_impl,
-            'substitute': self._substitute_impl,
-        }
-        
-        # Trier les formules par dépendances
-        sorted_formulas = self._topological_sort(formulas)
-        
-        # Appliquer chaque formule
-        success_count = 0
-        error_count = 0
-        
-        for formula in sorted_formulas:
-            if formula.python_code and not formula.error:
-                try:
-                    # Créer un environnement local avec la feuille courante
-                    exec_locals = {'ws': sheets[formula.sheet]}
-                    
-                    # Évaluer la formule
-                    result = eval(formula.python_code, exec_globals, exec_locals)
-                    
-                    # Gérer les résultats pandas (Series, DataFrame)
-                    if isinstance(result, pd.Series):
-                        result = result.iloc[0] if len(result) > 0 else None
-                    elif isinstance(result, pd.DataFrame):
-                        result = result.iloc[0, 0] if result.size > 0 else None
-                    elif isinstance(result, np.ndarray):
-                        result = result.item() if result.size == 1 else result[0] if result.size > 0 else None
-                    
-                    # Mettre à jour le workbook
-                    sheet = workbook[formula.sheet]
-                    cell = sheet.cell(row=formula.row, column=formula.col)
-                    
-                    # Conserver la formule originale et stocker la valeur calculée
-                    if cell.value and isinstance(cell.value, str) and cell.value.startswith('='):
-                        # Garder la formule, mais forcer la valeur calculée
-                        cell._value = cell.value  # Garder la formule
-                        cell.data_type = 'f'  # Type formule
-                        
-                        # Créer une cellule temporaire pour stocker la valeur
-                        # Note: openpyxl ne permet pas facilement de stocker formule + valeur
-                        # On va donc écrire directement la valeur
-                        cell.value = result
-                    else:
-                        cell.value = result
-                    
-                    # Mettre à jour le DataFrame aussi pour les calculs suivants
-                    sheets[formula.sheet].iloc[formula.row-1, formula.col-1] = result
-                    
-                    formula.value = result
-                    success_count += 1
-                    
-                except Exception as e:
-                    formula.error = f"Erreur de calcul: {str(e)}"
-                    error_count += 1
-                    logger.error(f"Erreur dans {formula.sheet}!{formula.address}: {str(e)}")
-                    logger.debug(f"Code Python: {formula.python_code}")
-        
-        logger.info(f"Formules appliquées: {success_count} succès, {error_count} erreurs")
-        return workbook
 
 async def map_budget_to_cells():
     """Mappe les données aux cellules Excel avec gestion du rapport"""

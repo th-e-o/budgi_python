@@ -88,9 +88,10 @@ class JSONHelper:
         return tags_list
     
     def update_tags_from_excel(self, json_data: Dict[str, Any], 
-                              workbook: openpyxl.Workbook) -> Tuple[Dict[str, Any], List[Dict[str, Any]]]:
+                            workbook: openpyxl.Workbook) -> Tuple[Dict[str, Any], List[Dict[str, Any]]]:
         """
         Met à jour les tags avec les données des cellules sources dans Excel
+        et supprime les tags dupliqués (qui ont exactement les mêmes labels)
         Retourne le JSON mis à jour et la liste des modifications
         """
         if 'tags' not in json_data:
@@ -98,6 +99,7 @@ class JSONHelper:
         
         modifications = []
         
+        # Première passe : enrichir les tags
         for tag in json_data['tags']:
             if 'source_cells' in tag and tag['source_cells']:
                 # Labels existants
@@ -141,9 +143,107 @@ class JSONHelper:
                         'existing_labels': existing_labels
                     })
         
-        logger.info(f"Tags mis à jour: {len(modifications)} cellules modifiées")
+        # Deuxième passe : identifier et supprimer les tags dupliqués
+        tags_by_labels = {}
+        unique_tags = []
+        removed_count = 0
+        
+        for tag in json_data['tags']:
+            # Créer une clé unique basée sur les labels triés
+            labels = tag.get('labels', [])
+            if isinstance(labels, list):
+                # Trier les labels pour que l'ordre n'importe pas
+                labels_key = tuple(sorted(str(l) for l in labels))
+            else:
+                labels_key = (str(labels),)
+            
+            # Vérifier si on a déjà vu ces labels
+            if labels_key in tags_by_labels:
+                # Tag dupliqué trouvé
+                removed_count += 1
+                logger.info(f"Tag dupliqué supprimé: {tag.get('sheet_name')}!{tag.get('cell_address')} - Labels: {labels_key}")
+            else:
+                # Nouveau tag unique
+                tags_by_labels[labels_key] = tag
+                unique_tags.append(tag)
+        
+        # Remplacer les tags par la liste nettoyée
+        json_data['tags'] = unique_tags
+        
+        # Ajouter l'information sur le nettoyage aux modifications
+        if removed_count > 0:
+            modifications.append({
+                'action': 'cleanup',
+                'removed_duplicates': removed_count,
+                'remaining_tags': len(unique_tags)
+            })
+        
+        logger.info(f"Tags mis à jour: {len(modifications)} cellules modifiées, {removed_count} doublons supprimés")
         return json_data, modifications
+
+    def deduplicate_tags(self, json_data: Dict[str, Any]) -> Tuple[Dict[str, Any], int]:
+        """
+        Méthode utilitaire pour dédupliquer les tags sans mise à jour depuis Excel
+        Retourne le JSON nettoyé et le nombre de doublons supprimés
+        """
+        if 'tags' not in json_data:
+            return json_data, 0
+        
+        tags_by_labels = {}
+        unique_tags = []
+        removed_count = 0
+        
+        for tag in json_data['tags']:
+            # Créer une clé unique basée sur les labels triés
+            labels = tag.get('labels', [])
+            if isinstance(labels, list):
+                labels_key = tuple(sorted(str(l) for l in labels))
+            else:
+                labels_key = (str(labels),)
+            
+            if labels_key in tags_by_labels:
+                removed_count += 1
+                logger.info(f"Tag dupliqué supprimé: {tag.get('sheet_name')}!{tag.get('cell_address')}")
+            else:
+                tags_by_labels[labels_key] = tag
+                unique_tags.append(tag)
+        
+        json_data['tags'] = unique_tags
+        
+        return json_data, removed_count
     
+    def get_duplicate_tags_info(self, json_data: Dict[str, Any]) -> List[Dict[str, Any]]:
+        """
+        Retourne des informations sur les tags dupliqués sans les supprimer
+        Utile pour l'analyse avant le nettoyage
+        """
+        if 'tags' not in json_data:
+            return []
+        
+        tags_by_labels = {}
+        duplicates_info = []
+        
+        for tag in json_data['tags']:
+            labels = tag.get('labels', [])
+            if isinstance(labels, list):
+                labels_key = tuple(sorted(str(l) for l in labels))
+            else:
+                labels_key = (str(labels),)
+            
+            if labels_key in tags_by_labels:
+                # On a trouvé un doublon
+                original = tags_by_labels[labels_key]
+                duplicates_info.append({
+                    'labels': list(labels_key),
+                    'original_cell': f"{original.get('sheet_name')}!{original.get('cell_address')}",
+                    'duplicate_cell': f"{tag.get('sheet_name')}!{tag.get('cell_address')}",
+                    'tag_ids': [original.get('id'), tag.get('id')]
+                })
+            else:
+                tags_by_labels[labels_key] = tag
+        
+        return duplicates_info
+
     def update_tags_from_dataframe(self, json_data: Dict[str, Any], 
                                   df: pd.DataFrame,
                                   sheet_name: str) -> Tuple[Dict[str, Any], List[Dict[str, Any]]]:

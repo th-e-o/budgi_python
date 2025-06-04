@@ -422,50 +422,86 @@ class MainLayout:
                         with col3:
                             st.metric("Erreurs", stats.get('errors', 0))
                         
-                        # Détails des erreurs si présentes
-                        if st.session_state.get('formula_errors'):
-                            if st.checkbox("⚠️ Afficher les détails des erreurs", key="show_formula_errors"):
-                                for err in st.session_state.formula_errors[:10]:
-                                    st.error(f"**{err['cell']}**: {err['error']}")
-                                    if 'formula' in err:
-                                        st.caption(f"Formule: {err['formula']}")
-                                if len(st.session_state.formula_errors) > 10:
-                                    st.warning(f"... et {len(st.session_state.formula_errors) - 10} autres erreurs")
-                        
-                        # Exemples de formules converties si disponibles
-                        if formulas.get('formulas'):
-                            if st.checkbox("🔍 Afficher des exemples de formules converties", key="show_formula_examples"):
-                                examples = [f for f in formulas['formulas'] if f.python_code and not f.error][:5]
-                                for f in examples:
-                                    st.markdown(f"**{f.sheet}!{f.address}**")
-                                    st.code(f"Excel: {f.formula}", language="excel")
-                                    st.code(f"Python: {f.python_code}", language="python")
-                                    if hasattr(f, 'value') and f.value is not None:
-                                        st.success(f"Valeur calculée: {f.value}")
-                        # Aide contextuelle
-                        if stats.get('success', 0) > 0:
-                            st.info("""
-                            💡 **Pour voir les valeurs calculées** : 
-                            1. Cliquez sur "⚡ Appliquer" pour calculer les formules
-                            2. Sélectionnez "Valeurs" dans le menu déroulant "Afficher"
-                            3. Les résultats s'afficheront à la place des formules
-                            """)
-                        
-                        # Bouton pour télécharger le script Python généré
-                        if formulas.get('script_file'):
-                            try: 
-                                with open(formulas['script_file'], 'r') as f:
-                                    script_content = f.read()
-                                st.download_button(
-                                    "📥 Télécharger le script Python",
-                                    data=script_content,
-                                    file_name="excel_formulas.py",
-                                    mime="text/x-python",
-                                    help="Script Python généré pour appliquer les formules"
-                                )
-                            except FileNotFoundError:
-                                st.warning("Le fichier de script n'est plus disponible")
-                        
+                        # Créer des tabs au lieu de checkboxes pour éviter les problèmes
+                        if stats.get('errors', 0) > 0 or formulas.get('formulas'):
+                            tab1, tab2, tab3 = st.tabs(["📊 Résumé", "⚠️ Erreurs", "🔍 Exemples"])
+                            
+                            with tab1:
+                                # Aide contextuelle
+                                if stats.get('success', 0) > 0:
+                                    st.info("""
+                                    💡 **Pour voir les valeurs calculées** : 
+                                    1. Cliquez sur "⚡ Appliquer" pour calculer les formules
+                                    2. Sélectionnez "Valeurs" dans le menu déroulant "Afficher"
+                                    3. Les résultats s'afficheront à la place des formules
+                                    """)
+                                
+                                # Bouton pour télécharger le script Python généré
+                                if formulas.get('script_file'):
+                                    try: 
+                                        with open(formulas['script_file'], 'r') as f:
+                                            script_content = f.read()
+                                        st.download_button(
+                                            "📥 Télécharger le script Python",
+                                            data=script_content,
+                                            file_name="excel_formulas.py",
+                                            mime="text/x-python",
+                                            help="Script Python généré pour appliquer les formules"
+                                        )
+                                    except FileNotFoundError:
+                                        st.warning("Le fichier de script n'est plus disponible")
+                            
+                            with tab2:
+                                # Détails des erreurs si présentes
+                                if st.session_state.get('formula_errors'):
+                                    st.warning(f"{len(st.session_state.formula_errors)} erreurs détectées")
+                                    
+                                    # Au lieu d'un container avec des expanders, utiliser un simple listing
+                                    for i, err in enumerate(st.session_state.formula_errors[:10]):
+                                        st.markdown(f"### Erreur {i+1}: {err['cell']}")
+                                        st.error(err['error'])
+                                        if 'formula' in err:
+                                            st.code(f"Formule: {err['formula']}", language="excel")
+                                        if 'python_code' in err and st.session_state.get('debug_mode'):
+                                            with st.expander("Voir le code Python généré"):
+                                                st.code(err['python_code'], language="python")
+                                        st.markdown("---")
+                                    
+                                    if len(st.session_state.formula_errors) > 10:
+                                        st.info(f"... et {len(st.session_state.formula_errors) - 10} autres erreurs")
+                                else:
+                                    st.success("✅ Aucune erreur détectée")
+
+                            # Et pour tab3 (exemples), simplifier aussi :
+                            with tab3:
+                                # Exemples de formules converties
+                                if formulas.get('formulas'):
+                                    examples = [f for f in formulas['formulas'] if f.python_code and not f.error][:5]
+                                    if examples:
+                                        for i, f in enumerate(examples):
+                                            st.markdown(f"### {f.sheet}!{f.address}")
+                                            
+                                            # Utiliser des colonnes au lieu d'expander
+                                            col1, col2 = st.columns(2)
+                                            
+                                            with col1:
+                                                st.markdown("**Formule Excel:**")
+                                                st.code(f.formula, language="excel")
+                                            
+                                            with col2:
+                                                st.markdown("**Code Python:**")
+                                                st.code(f.python_code, language="python")
+                                            
+                                            # Afficher la valeur si disponible
+                                            if hasattr(f, 'value') and f.value is not None:
+                                                st.success(f"Valeur calculée: {f.value}")
+                                            
+                                            st.markdown("---")
+                                    else:
+                                        st.info("Aucun exemple disponible (toutes les formules ont des erreurs)")
+                                else:
+                                    st.info("Aucune formule parsée")
+
                 except Exception as e:
                     st.error(f"Erreur affichage: {str(e)}")
                     logger.error(f"Erreur affichage feuille {selected_sheet}: {str(e)}", exc_info=True)
@@ -497,39 +533,120 @@ class MainLayout:
                 col1, col2 = st.columns(2)
                 with col1:
                     if st.button("🔄 Actualiser labels depuis Excel", 
-                               help="Met à jour les labels du JSON avec le contenu des cellules sources",
-                               use_container_width=True):
+                            help="Met à jour les labels du JSON avec le contenu des cellules sources et supprime les doublons",
+                            use_container_width=True):
                         if st.session_state.get('excel_workbook'):
-                            with st.spinner("Actualisation en cours..."):
+                            with st.spinner("Actualisation et nettoyage en cours..."):
+                                # D'abord, afficher les doublons existants
+                                duplicates_before = self.services['json_helper'].get_duplicate_tags_info(
+                                    st.session_state.json_data
+                                )
+                                
+                                # Mettre à jour et nettoyer
                                 updated_json, modifications = self.services['json_helper'].update_tags_from_excel(
                                     st.session_state.json_data,
                                     st.session_state.excel_workbook
                                 )
                                 st.session_state.json_data = updated_json
                                 
-                                if modifications:
-                                    st.success(f"✅ {len(modifications)} tags enrichis")
-                                    with st.expander("📋 Détails des modifications"):
-                                        for mod in modifications:
-                                            st.markdown(f"**{mod['sheet']}!{mod['cell']}** : +{len(mod['added_labels'])} labels")
-                                            for label in mod['added_labels']:
-                                                st.markdown(f"  • {label}")
+                                # Compter les modifications réelles (sans le cleanup)
+                                actual_modifications = [m for m in modifications if m.get('action') != 'cleanup']
+                                cleanup_info = next((m for m in modifications if m.get('action') == 'cleanup'), None)
+                                
+                                # Afficher les résultats
+                                if actual_modifications or cleanup_info:
+                                    success_msg = []
+                                    if actual_modifications:
+                                        success_msg.append(f"✅ {len(actual_modifications)} tags enrichis")
+                                    if cleanup_info:
+                                        success_msg.append(f"🧹 {cleanup_info['removed_duplicates']} doublons supprimés")
+                                    
+                                    st.success(" | ".join(success_msg))
+                                    
+                                    # Stocker les détails dans session_state pour affichage après
+                                    st.session_state.show_modification_details = True
+                                    st.session_state.actual_modifications = actual_modifications
+                                    st.session_state.cleanup_info = cleanup_info
+                                    st.session_state.duplicates_before = duplicates_before
                                 else:
-                                    st.info("ℹ️ Aucun nouveau label trouvé")
+                                    st.info("ℹ️ Aucun nouveau label trouvé et aucun doublon à nettoyer")
+                                    st.session_state.show_modification_details = False
                         else:
                             st.warning("⚠️ Chargez d'abord un fichier Excel")
-                
+
+                # Colonne 2 avec les boutons supplémentaires
                 with col2:
-                    # Export JSON modifié
-                    if st.button("💾 Exporter JSON modifié", use_container_width=True):
-                        json_str = self.services['json_helper'].export_json(st.session_state.json_data)
-                        st.download_button(
-                            "📥 Télécharger",
-                            data=json_str,
-                            file_name=f"config_updated_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json",
-                            mime="application/json",
-                            use_container_width=True
-                        )
+                    col2a, col2b = st.columns(2)
+                    
+                    with col2a:
+                        # Bouton pour analyser les doublons
+                        if st.button("🔍 Analyser doublons", use_container_width=True):
+                            duplicates = self.services['json_helper'].get_duplicate_tags_info(st.session_state.json_data)
+                            if duplicates:
+                                st.warning(f"⚠️ {len(duplicates)} groupes de doublons trouvés")
+                                # Stocker dans session_state pour affichage après
+                                st.session_state.show_duplicates_details = True
+                                st.session_state.current_duplicates = duplicates
+                            else:
+                                st.success("✅ Aucun doublon trouvé")
+                                st.session_state.show_duplicates_details = False
+
+                    with col2b:
+                        # Export JSON modifié
+                        if st.button("💾 Exporter JSON", use_container_width=True):
+                            json_str = self.services['json_helper'].export_json(st.session_state.json_data)
+                            st.download_button(
+                                "📥 Télécharger",
+                                data=json_str,
+                                file_name=f"config_updated_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json",
+                                mime="application/json",
+                                use_container_width=True
+                            )
+                
+                # Afficher les détails APRÈS les colonnes (pas d'expander car on est déjà dans un expander)
+                if st.session_state.get('show_modification_details', False):
+                    st.markdown("---")
+                    st.markdown("### 📋 Détails des modifications")
+                    
+                    actual_modifications = st.session_state.get('actual_modifications', [])
+                    cleanup_info = st.session_state.get('cleanup_info')
+                    duplicates_before = st.session_state.get('duplicates_before', [])
+                    
+                    if actual_modifications:
+                        st.markdown("**Labels ajoutés :**")
+                        for mod in actual_modifications:
+                            st.markdown(f"**{mod['sheet']}!{mod['cell']}** : +{len(mod['added_labels'])} labels")
+                            for label in mod['added_labels'][:5]:
+                                st.markdown(f"  • {label}")
+                            if len(mod['added_labels']) > 5:
+                                st.markdown(f"  • ... et {len(mod['added_labels']) - 5} autres")
+                    
+                    if cleanup_info:
+                        st.markdown("---")
+                        st.markdown(f"**Nettoyage effectué :**")
+                        st.markdown(f"• Tags avant nettoyage : {cleanup_info['remaining_tags'] + cleanup_info['removed_duplicates']}")
+                        st.markdown(f"• Tags après nettoyage : {cleanup_info['remaining_tags']}")
+                        st.markdown(f"• Doublons supprimés : {cleanup_info['removed_duplicates']}")
+                        
+                        if duplicates_before and st.checkbox("Voir les doublons supprimés", key="show_removed_duplicates"):
+                            for i, dup in enumerate(duplicates_before[:10]):
+                                st.text(f"Doublon {i+1}: {dup['original_cell']} = {dup['duplicate_cell']}")
+                                st.text(f"  Labels: {', '.join(dup['labels'][:3])}...")
+                            if len(duplicates_before) > 10:
+                                st.text(f"... et {len(duplicates_before) - 10} autres doublons")
+                
+                # Afficher les détails des doublons APRÈS les colonnes
+                if st.session_state.get('show_duplicates_details', False) and st.session_state.get('current_duplicates'):
+                    st.markdown("---")
+                    st.markdown("### 🔍 Doublons trouvés")
+                    duplicates = st.session_state.current_duplicates
+                    for i, dup in enumerate(duplicates[:10]):
+                        st.markdown(f"**Groupe {i+1}:**")
+                        st.text(f"• {dup['original_cell']}")
+                        st.text(f"• {dup['duplicate_cell']}")
+                        st.text(f"Labels: {', '.join(dup['labels'][:3])}...")
+                    if len(duplicates) > 10:
+                        st.info(f"... et {len(duplicates) - 10} autres doublons")
                         
             except Exception as e:
                 st.error(f"Erreur JSON: {str(e)}")
@@ -580,7 +697,7 @@ class MainLayout:
                     if st.button("🎯 Mapper vers Excel", use_container_width=True, type="secondary"):
                         on_tool_action({'action': 'map_budget_cells'})
                         
-             # Save changes if modified
+            # Save changes if modified
             if not df.equals(edited_df):
                 if st.button("💾 Sauvegarder les modifications", use_container_width=True):
                     st.session_state.extracted_data = edited_df.to_dict('records')

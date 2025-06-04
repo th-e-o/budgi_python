@@ -1236,7 +1236,55 @@ if __name__ == "__main__":
             # Créer le DataFrame
             sheets[sheet_name] = pd.DataFrame(data) if data else pd.DataFrame()
         
-        # Créer l'environnement d'exécution avec helpers inline
+        # Définir les fonctions helper
+        def safe_get_numeric(value, default=0):
+            """Convertit une valeur en nombre de manière sûre"""
+            if value is None:
+                return default
+            if isinstance(value, (int, float)):
+                return value
+            if isinstance(value, str):
+                # Si c'est une formule Excel, retourner default
+                if value.startswith('='):
+                    return default
+                # Essayer de convertir
+                try:
+                    # Gérer les virgules comme séparateurs décimaux
+                    cleaned = value.replace(',', '.').replace(' ', '')
+                    return float(cleaned) if cleaned else default
+                except:
+                    return default
+            # Pour tout autre type
+            try:
+                return float(value)
+            except:
+                return default
+
+        def safe_sum_range(df_range):
+            """Somme sûre d'une plage de DataFrame"""
+            if df_range is None:
+                return 0
+            try:
+                # Aplatir et convertir en numérique
+                values = df_range.values.flatten()
+                numeric_values = [safe_get_numeric(v) for v in values]
+                return sum(numeric_values)
+            except:
+                return 0
+
+        def safe_cell(df, row, col, default=0):
+            """Accès sûr à une cellule"""
+            try:
+                if row < 0 or col < 0:
+                    return default
+                if row >= len(df) or col >= len(df.columns):
+                    return default
+                value = df.iloc[row, col]
+                return safe_get_numeric(value, default)
+            except:
+                return default
+        
+        # Créer l'environnement d'exécution avec helpers
         exec_globals = {
             'sheets': sheets,
             'np': np,
@@ -1245,7 +1293,11 @@ if __name__ == "__main__":
             'vlookup': ExcelFormulaParser._vlookup_impl,
             'match_index': ExcelFormulaParser._match_index_impl,
             'substitute': ExcelFormulaParser._substitute_impl,
-            # Ajouter des fonctions helper inline
+            # IMPORTANT : Ajouter les fonctions helper
+            'safe_cell': safe_cell,
+            'safe_sum_range': safe_sum_range,
+            'safe_get_numeric': safe_get_numeric,
+            # Ajouter des fonctions helper inline supplémentaires
             'safe_value': lambda x: 0 if (x is None or pd.isna(x) or (isinstance(x, str) and x.startswith('='))) else x,
             'safe_div': lambda a, b: a / b if b != 0 else 0,
         }
@@ -1268,7 +1320,7 @@ if __name__ == "__main__":
                     result = eval(formula.python_code, exec_globals, exec_locals)
                     
                     # IMPORTANT : Vérifier et convertir le résultat avant de l'écrire
-    
+
                     # Si le résultat est None, le remplacer par 0 ou une chaîne vide
                     if result is None:
                         logger.warning(f"Formula {formula.sheet}!{formula.address} returned None")
@@ -1321,7 +1373,7 @@ if __name__ == "__main__":
                     # openpyxl accepte : int, float, str, bool, datetime, None
                     if not isinstance(result, (int, float, str, bool, type(None))):
                         result = str(result)
-    
+
                     cell.value = result
 
                     # Mettre à jour le DataFrame aussi pour les calculs suivants
@@ -1341,6 +1393,7 @@ if __name__ == "__main__":
                     })
                     logger.error(f"Erreur dans {formula.sheet}!{formula.address}: {str(e)}")
                     logger.debug(f"Code Python: {formula.python_code}")
+        
         # Stocker les erreurs dans session_state pour l'affichage
         import streamlit as st
         if 'formula_errors' not in st.session_state:
@@ -1349,6 +1402,7 @@ if __name__ == "__main__":
         
         logger.info(f"Formules appliquées: {success_count} succès, {error_count} erreurs")
         return workbook
+
 
     # Implémentations des fonctions helper
     @staticmethod
