@@ -8,6 +8,10 @@ import base64
 import time
 from pathlib import Path
 import pandas as pd
+import logging
+import os
+
+logger = logging.getLogger(__name__)
 
 class MainLayout:
     """Modern simplified layout focused on chat and Excel functionality"""
@@ -214,7 +218,7 @@ class MainLayout:
                 st.session_state.last_file_key = file_key
                 on_file_upload(uploaded_file)
     
-    def _render_excel_data_tab(self, on_tool_action : Callable):
+    def _render_excel_data_tab(self, on_tool_action: Callable):
         if not st.session_state.get('excel_workbook'):
             # Clean upload area
             uploaded = st.file_uploader(
@@ -242,26 +246,30 @@ class MainLayout:
             sheets = wb.sheetnames
             
             # Initialiser la feuille sélectionnée si nécessaire
-            if 'selected_sheet' not in st.session_state and sheets:
-                st.session_state.selected_sheet = sheets[0]
+            if 'selected_sheet' not in st.session_state:
+                st.session_state.selected_sheet = sheets[0] if sheets else None
+            
+            # Vérifier que la feuille sélectionnée existe toujours
+            if st.session_state.selected_sheet not in sheets:
+                st.session_state.selected_sheet = sheets[0] if sheets else None
             
             col1, col2, col3, col4, col5 = st.columns([3, 1, 1, 1, 1])
             with col1:
-                # Utiliser une callback pour gérer le changement de feuille
-                def on_sheet_change():
-                    # Forcer le rechargement des données
-                    st.session_state.sheet_changed = True
-                    
+                # Sélecteur de feuille sans callback complexe
                 selected_sheet = st.selectbox(
                     "Sélectionner une feuille",
                     sheets,
                     key="sheet_selector_main",
-                    index=sheets.index(st.session_state.selected_sheet) if st.session_state.selected_sheet in sheets else 0,
-                    on_change=on_sheet_change
+                    index=sheets.index(st.session_state.get('selected_sheet', sheets[0])) if st.session_state.get('selected_sheet', sheets[0]) in sheets else 0
                 )
                 
-                # Mettre à jour la feuille sélectionnée
-                st.session_state.selected_sheet = selected_sheet
+                # Détecter le changement de feuille
+                if selected_sheet != st.session_state.get('selected_sheet'):
+                    st.session_state.selected_sheet = selected_sheet
+                    # Nettoyer les données en cache pour forcer le rechargement
+                    if 'excel_data_cache' in st.session_state:
+                        del st.session_state.excel_data_cache
+                    st.rerun()
 
             with col2:
                 # Toggle valeurs/formules
@@ -280,6 +288,11 @@ class MainLayout:
                 if st.session_state.get('parsed_formulas'):
                     if st.button("⚡ Appliquer", help="Appliquer les formules"):
                         on_tool_action({'action': 'apply_formulas'})
+                    
+                    # Afficher les erreurs si elles existent
+                    if st.session_state.get('formula_errors'):
+                        errors = st.session_state.formula_errors
+                        st.caption(f"⚠️ {len(errors)} erreurs")
 
             with col5:
                 st.download_button(
@@ -292,11 +305,7 @@ class MainLayout:
             # Display data
             if selected_sheet:
                 try:
-                    # Forcer le rechargement si la feuille a changé
-                    if st.session_state.get('sheet_changed', False):
-                        st.session_state.sheet_changed = False
-                        st.rerun()
-                    
+                    # Charger les données de la feuille
                     df = self.services['excel_handler'].sheet_to_dataframe(
                         wb, 
                         selected_sheet,
@@ -320,11 +329,25 @@ class MainLayout:
                         
                         df = new_df
                     
-                    # Simple info
-                    st.caption(f"📊 {selected_sheet} - {len(df)} lignes × {len(df.columns)} colonnes")
+                    # Simple info avec debug info
+                    debug_info = f"ID: {editor_key}" if st.session_state.get('debug_mode', False) else ""
+                    
+                    # Vérifier si des formules sont présentes dans les données affichées
+                    has_formulas = False
+                    if display_mode == "Valeurs":
+                        for col in df.columns:
+                            if df[col].astype(str).str.startswith('[=', na=False).any():
+                                has_formulas = True
+                                break
+                    
+                    caption_text = f"📊 {selected_sheet} - {len(df)} lignes × {len(df.columns)} colonnes {debug_info}"
+                    if has_formulas and display_mode == "Valeurs":
+                        caption_text += " ⚠️ Formules détectées (valeurs non calculées)"
+                    
+                    st.caption(caption_text)
                     
                     # Créer une clé unique pour chaque combinaison feuille + mode
-                    editor_key = f"excel_editor_{selected_sheet}_{display_mode}_{id(wb)}"
+                    editor_key = f"excel_editor_{selected_sheet}_{display_mode}"
                     
                     # Configuration du data editor
                     column_config = {}
@@ -365,37 +388,79 @@ class MainLayout:
                                 # Mettre à jour le workbook en session
                                 st.session_state.excel_workbook = wb
                                 
-                                # Sauvegarder dans un fichier temporaire pour recharger les valeurs
-                                import tempfile
-                                with tempfile.NamedTemporaryFile(suffix='.xlsx', delete=False) as tmp:
-                                    wb.save(tmp.name)
-                                    self.services['excel_handler'].current_path = tmp.name
-                                    st.session_state.temp_files.append(tmp.name)
-                                
                                 st.success(f"✅ Modifications sauvegardées dans {selected_sheet}!")
                                 
-                                # Forcer le rechargement
-                                time.sleep(0.5)  # Petit délai pour s'assurer que le fichier est écrit
+                                # Forcer le rechargement pour afficher les nouvelles valeurs
+                                time.sleep(0.5)
                                 st.rerun()
                                 
                             except Exception as e:
                                 st.error(f"❌ Erreur lors de la sauvegarde: {str(e)}")
                                 logger.error(f"Erreur sauvegarde: {str(e)}", exc_info=True)
                     
-                    # Aide pour l'utilisateur
-                    with st.expander("💡 Aide pour l'édition"):
-                        st.markdown("""
-                        **Pour éditer les cellules :**
-                        - Double-cliquez sur une cellule pour la modifier
-                        - Utilisez Tab ou Enter pour naviguer
-                        - Cliquez sur "+" en bas pour ajouter des lignes
-                        - Cliquez sur "💾 Sauvegarder" pour enregistrer vos modifications
+                    # Aide pour l'utilisateur - utiliser info au lieu d'expander
+                    st.info("""
+                    💡 **Aide pour l'édition** : Double-cliquez sur une cellule pour la modifier. 
+                    Utilisez Tab ou Enter pour naviguer. Cliquez sur "+" pour ajouter des lignes. 
+                    Sauvegardez vos modifications avec le bouton 💾.
+                    """)
+                    
+                    # Afficher les détails des formules parsées si disponibles
+                    if st.session_state.get('parsed_formulas'):
+                        formulas = st.session_state.parsed_formulas
+                        stats = formulas.get('statistics', {})
                         
-                        **Note :** Si vous ne pouvez pas éditer, essayez de :
-                        1. Rafraîchir la page (F5)
-                        2. Cliquer sur une cellule vide et commencer à taper
-                        3. Utiliser le bouton "+" pour ajouter des lignes
-                        """)
+                        st.markdown("### 📊 Résultats du parsing des formules")
+                        
+                        # Métriques de synthèse
+                        col1, col2, col3 = st.columns(3)
+                        with col1:
+                            st.metric("Total", stats.get('total', 0))
+                        with col2:
+                            st.metric("Succès", stats.get('success', 0))
+                        with col3:
+                            st.metric("Erreurs", stats.get('errors', 0))
+                        
+                        # Détails des erreurs si présentes
+                        if st.session_state.get('formula_errors'):
+                            with st.expander("⚠️ Détails des erreurs", expanded=False):
+                                for err in st.session_state.formula_errors[:10]:
+                                    st.error(f"**{err['cell']}**: {err['error']}")
+                                    if 'formula' in err:
+                                        st.caption(f"Formule: {err['formula']}")
+                                if len(st.session_state.formula_errors) > 10:
+                                    st.warning(f"... et {len(st.session_state.formula_errors) - 10} autres erreurs")
+                        
+                        # Exemples de formules converties si disponibles
+                        if formulas.get('formulas'):
+                            with st.expander("🔍 Exemples de formules converties", expanded=False):
+                                examples = [f for f in formulas['formulas'] if f.python_code and not f.error][:5]
+                                for f in examples:
+                                    st.markdown(f"**{f.sheet}!{f.address}**")
+                                    st.code(f"Excel: {f.formula}", language="excel")
+                                    st.code(f"Python: {f.python_code}", language="python")
+                                    if hasattr(f, 'value') and f.value is not None:
+                                        st.success(f"Valeur calculée: {f.value}")
+                        # Aide contextuelle
+                        if stats.get('success', 0) > 0:
+                            st.info("""
+                            💡 **Pour voir les valeurs calculées** : 
+                            1. Cliquez sur "⚡ Appliquer" pour calculer les formules
+                            2. Sélectionnez "Valeurs" dans le menu déroulant "Afficher"
+                            3. Les résultats s'afficheront à la place des formules
+                            """)
+                        
+                        # Bouton pour télécharger le script Python généré
+                        if formulas.get('script_file'):
+                            with open(formulas['script_file'], 'r') as f:
+                                script_content = f.read()
+                            st.download_button(
+                                "📥 Télécharger le script Python",
+                                data=script_content,
+                                file_name="excel_formulas.py",
+                                mime="text/x-python",
+                                help="Script Python généré pour appliquer les formules"
+                            )
                         
                 except Exception as e:
                     st.error(f"Erreur affichage: {str(e)}")
@@ -476,7 +541,7 @@ class MainLayout:
         
         # Display extracted data if available
         if st.session_state.get('extracted_data'):
-            st.markdown("###Données extraites")
+            st.markdown("### Données extraites")
             
             df = pd.DataFrame(st.session_state.extracted_data)
             

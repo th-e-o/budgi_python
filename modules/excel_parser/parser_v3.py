@@ -12,6 +12,7 @@ from tqdm import tqdm
 from collections import defaultdict
 import ast
 import operator
+import datetime
 
 logger = logging.getLogger(__name__)
 
@@ -929,6 +930,9 @@ if __name__ == "__main__":
             'match_index': self._match_index_impl,
             'substitute': self._substitute_impl,
         }
+
+        # Trier les formules par dépendances
+        sorted_formulas = self._topological_sort(formulas)
         
         # Appliquer chaque formule
         success_count = 0
@@ -943,24 +947,46 @@ if __name__ == "__main__":
                     # Évaluer la formule
                     result = eval(formula.python_code, exec_globals, exec_locals)
                     
+                    # Gérer les résultats pandas (Series, DataFrame)
+                    if isinstance(result, pd.Series):
+                        result = result.iloc[0] if len(result) > 0 else None
+                    elif isinstance(result, pd.DataFrame):
+                        result = result.iloc[0, 0] if result.size > 0 else None
+                    elif isinstance(result, np.ndarray):
+                        result = result.item() if result.size == 1 else result[0] if result.size > 0 else None
+
                     # Mettre à jour le workbook
                     sheet = workbook[formula.sheet]
-                    sheet.cell(row=formula.row, column=formula.col, value=result)
+                    cell = sheet.cell(row=formula.row, column=formula.col)
                     
-                    # Mettre à jour le DataFrame aussi
+                    # Conserver la formule originale et stocker la valeur calculée
+                    if cell.value and isinstance(cell.value, str) and cell.value.startswith('='):
+                        # Garder la formule, mais forcer la valeur calculée
+                        cell._value = cell.value  # Garder la formule
+                        cell.data_type = 'f'  # Type formule
+                        
+                        # Créer une cellule temporaire pour stocker la valeur
+                        # Note: openpyxl ne permet pas facilement de stocker formule + valeur
+                        # On va donc écrire directement la valeur
+                        cell.value = result
+                    else:
+                        cell.value = result
+
+                    # Mettre à jour le DataFrame aussi pour les calculs suivants
                     sheets[formula.sheet].iloc[formula.row-1, formula.col-1] = result
                     
                     formula.value = result
                     success_count += 1
                     
                 except Exception as e:
-                    formula.error = str(e)
+                    formula.error = f"Erreur de calcul: {str(e)}"
                     error_count += 1
-                    logger.error(f"Error in {formula.sheet}!{formula.address}: {str(e)}")
+                    logger.error(f"Erreur dans {formula.sheet}!{formula.address}: {str(e)}")
+                    logger.debug(f"Code Python: {formula.python_code}")
         
-        logger.info(f"Applied formulas: {success_count} success, {error_count} errors")
+        logger.info(f"Formules appliquées: {success_count} succès, {error_count} erreurs")
         return workbook
-    
+
     # Implémentations des fonctions helper
     @staticmethod
     def _vlookup_impl(lookup_value, table_array, col_index, range_lookup=True):

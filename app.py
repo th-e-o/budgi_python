@@ -11,6 +11,7 @@ import os
 import pandas as pd
 from modules.excel_parser.parser_v3 import ExcelFormulaParser, ParserConfig
 from modules.budget_mapper import BudgetMapper
+from typing import List
 
 # Configuration de la page
 st.set_page_config(
@@ -542,51 +543,84 @@ def parse_excel_formulas():
             logger.error(f"Erreur parsing: {str(e)}")
             st.error(f"❌ Erreur: {str(e)}")
 
-def apply_excel_formulas():
-    """Applique les formules Excel au workbook"""
-    if not st.session_state.get('excel_workbook') or not st.session_state.get('parsed_formulas'):
-        st.error("❌ Workbook ou formules manquantes")
-        return
-    
-    with st.spinner("Application des formules..."):
-        try:
-            formulas = st.session_state.parsed_formulas.get('formulas', [])
-            wb = st.session_state.excel_workbook
-            
-            applied = 0
-            errors = []
-            
-            # Appliquer chaque formule
-            for formula in formulas:
-                if formula.python_code and not formula.error:
-                    try:
-                        sheet = wb[formula.sheet]
-                        # Note: Implémenter l'évaluation réelle ici
-                        # Pour l'instant, on simule
-                        applied += 1
-                    except Exception as e:
-                        errors.append({
-                            'cell': f"{formula.sheet}!{formula.address}",
-                            'error': str(e)
-                        })
-            
-            # Afficher les résultats
-            col1, col2 = st.columns(2)
-            with col1:
-                st.metric("✅ Appliquées", applied)
-            with col2:
-                st.metric("❌ Erreurs", len(errors))
-            
-            if errors:
-                with st.expander("Détails des erreurs"):
-                    for err in errors[:10]:  # Limiter à 10
-                        st.error(f"{err['cell']}: {err['error']}")
-            
-            st.success(f"✅ {applied} formules appliquées!")
-            st.rerun()
-            
-        except Exception as e:
-            st.error(f"❌ Erreur: {str(e)}")
+    def apply_formulas_to_workbook(self, workbook: openpyxl.Workbook, 
+                                  formulas: List[FormulaCell]) -> openpyxl.Workbook:
+        """Applique directement les formules au workbook"""
+        # Charger toutes les feuilles en DataFrames
+        sheets = {}
+        for sheet_name in workbook.sheetnames:
+            sheet = workbook[sheet_name]
+            data = []
+            for row in sheet.iter_rows(values_only=True):
+                data.append(list(row))
+            sheets[sheet_name] = pd.DataFrame(data) if data else pd.DataFrame()
+        
+        # Créer un environnement d'exécution
+        exec_globals = {
+            'sheets': sheets,
+            'np': np,
+            'pd': pd,
+            'datetime': datetime,
+            'vlookup': self._vlookup_impl,
+            'match_index': self._match_index_impl,
+            'substitute': self._substitute_impl,
+        }
+        
+        # Trier les formules par dépendances
+        sorted_formulas = self._topological_sort(formulas)
+        
+        # Appliquer chaque formule
+        success_count = 0
+        error_count = 0
+        
+        for formula in sorted_formulas:
+            if formula.python_code and not formula.error:
+                try:
+                    # Créer un environnement local avec la feuille courante
+                    exec_locals = {'ws': sheets[formula.sheet]}
+                    
+                    # Évaluer la formule
+                    result = eval(formula.python_code, exec_globals, exec_locals)
+                    
+                    # Gérer les résultats pandas (Series, DataFrame)
+                    if isinstance(result, pd.Series):
+                        result = result.iloc[0] if len(result) > 0 else None
+                    elif isinstance(result, pd.DataFrame):
+                        result = result.iloc[0, 0] if result.size > 0 else None
+                    elif isinstance(result, np.ndarray):
+                        result = result.item() if result.size == 1 else result[0] if result.size > 0 else None
+                    
+                    # Mettre à jour le workbook
+                    sheet = workbook[formula.sheet]
+                    cell = sheet.cell(row=formula.row, column=formula.col)
+                    
+                    # Conserver la formule originale et stocker la valeur calculée
+                    if cell.value and isinstance(cell.value, str) and cell.value.startswith('='):
+                        # Garder la formule, mais forcer la valeur calculée
+                        cell._value = cell.value  # Garder la formule
+                        cell.data_type = 'f'  # Type formule
+                        
+                        # Créer une cellule temporaire pour stocker la valeur
+                        # Note: openpyxl ne permet pas facilement de stocker formule + valeur
+                        # On va donc écrire directement la valeur
+                        cell.value = result
+                    else:
+                        cell.value = result
+                    
+                    # Mettre à jour le DataFrame aussi pour les calculs suivants
+                    sheets[formula.sheet].iloc[formula.row-1, formula.col-1] = result
+                    
+                    formula.value = result
+                    success_count += 1
+                    
+                except Exception as e:
+                    formula.error = f"Erreur de calcul: {str(e)}"
+                    error_count += 1
+                    logger.error(f"Erreur dans {formula.sheet}!{formula.address}: {str(e)}")
+                    logger.debug(f"Code Python: {formula.python_code}")
+        
+        logger.info(f"Formules appliquées: {success_count} succès, {error_count} erreurs")
+        return workbook
 
 async def map_budget_to_cells():
     """Mappe les données aux cellules Excel avec gestion du rapport"""

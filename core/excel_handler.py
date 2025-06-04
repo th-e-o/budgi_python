@@ -122,80 +122,129 @@ class ExcelHandler:
         sheet = workbook[sheet_name]
         data = []
         
-        # Si on veut les valeurs calculées et qu'on a le chemin du fichier
-        if not show_formulas and hasattr(self, 'current_path') and self.current_path:
+        # Si on veut les valeurs et qu'on a un chemin de fichier, recharger en mode data_only
+        if not show_formulas and self.current_path and os.path.exists(self.current_path):
             try:
-                # Charger en mode data_only pour avoir les valeurs
+                # Charger une copie du workbook en mode data_only pour obtenir les valeurs
                 wb_values = openpyxl.load_workbook(self.current_path, data_only=True)
                 sheet_values = wb_values[sheet_name]
-                for row in sheet_values.iter_rows(values_only=True):
-                    data.append(list(row))
+                
+                # Lire les valeurs calculées
+                for row in sheet_values.iter_rows():
+                    row_data = []
+                    for cell in row:
+                        row_data.append(cell.value)
+                    data.append(row_data)
+                
                 wb_values.close()
-            except:
-                # Fallback sur les valeurs actuelles
-                for row in sheet.iter_rows(values_only=True):
-                    data.append(list(row))
+                
+            except Exception as e:
+                logger.warning(f"Impossible de charger les valeurs calculées: {str(e)}")
+                # Fallback: utiliser les valeurs du workbook actuel
+                for row in sheet.iter_rows():
+                    row_data = []
+                    for cell in row:
+                        # En mode valeurs, essayer d'obtenir la valeur interne si possible
+                        if hasattr(cell, '_value') and cell._value is not None:
+                            row_data.append(cell._value)
+                        else:
+                            row_data.append(cell.value)
+                    data.append(row_data)
         else:
-            # Mode formules ou pas de chemin
-            for row in sheet.iter_rows(values_only=True):
-                data.append(list(row))
+            # Mode formules ou pas de fichier : afficher formules/valeurs telles quelles
+            for row in sheet.iter_rows():
+                row_data = []
+                for cell in row:
+                    if show_formulas:
+                        # Mode formules : toujours afficher la valeur brute (formule si présente)
+                        row_data.append(cell.value)
+                    else:
+                        # Mode valeurs sans fichier : essayer d'obtenir la valeur calculée
+                        if hasattr(cell, 'value') and isinstance(cell.value, str) and cell.value.startswith('='):
+                            # C'est une formule, mais on ne peut pas obtenir la valeur calculée
+                            # Afficher [Formula] ou la formule elle-même
+                            row_data.append(f"[{cell.value}]")
+                        else:
+                            row_data.append(cell.value)
+                data.append(row_data)
         
         if data:
+            # Créer le DataFrame avec les données existantes
             df = pd.DataFrame(data)
-            # Important: ne pas remplir avec des chaînes vides
-            # Cela permet l'édition dans toutes les cellules
-            return df
         else:
-            # IMPORTANT: Créer un DataFrame avec au moins quelques lignes et colonnes
-            # pour permettre l'édition dans Streamlit
-            min_rows = 20  # Nombre minimum de lignes
-            min_cols = 10  # Nombre minimum de colonnes
-            
-            # Obtenir les dimensions actuelles de la feuille
-            max_row = max(sheet.max_row, min_rows)
-            max_col = max(sheet.max_column, min_cols)
-            
-            # Créer un DataFrame avec des valeurs None (pas des chaînes vides)
-            df = pd.DataFrame(index=range(max_row), columns=range(max_col))
-            
-            return df
+            # Créer un DataFrame vide avec dimensions minimales
+            df = pd.DataFrame()
+        
+        # S'assurer d'avoir au moins 20 lignes et 10 colonnes pour l'édition
+        min_rows = 20
+        min_cols = 10
+        
+        current_rows = len(df)
+        current_cols = len(df.columns) if not df.empty else 0
+        
+        # Étendre les lignes si nécessaire
+        if current_rows < min_rows:
+            # Ajouter des lignes vides
+            empty_rows = pd.DataFrame(index=range(current_rows, min_rows), columns=df.columns if not df.empty else range(min_cols))
+            df = pd.concat([df, empty_rows], ignore_index=True)
+        
+        # Étendre les colonnes si nécessaire
+        if current_cols < min_cols:
+            for i in range(current_cols, min_cols):
+                df[i] = None
+        
+        return df
     
     def dataframe_to_sheet(self, df: pd.DataFrame, workbook: openpyxl.Workbook, 
                         sheet_name: str, start_row: int = 1, start_col: int = 1):
         """Écrit un DataFrame dans une feuille"""
-        if sheet_name in workbook.sheetnames:
-            sheet = workbook[sheet_name]
-        else:
-            sheet = workbook.create_sheet(sheet_name)
+        if sheet_name not in workbook.sheetnames:
+            raise ValueError(f"Feuille '{sheet_name}' non trouvée")
+            
+        sheet = workbook[sheet_name]
         
-        # D'abord, effacer toutes les cellules existantes dans la plage
-        # pour éviter les données résiduelles
-        for row in sheet.iter_rows(min_row=start_row, max_row=start_row + len(df) - 1,
-                                min_col=start_col, max_col=start_col + len(df.columns) - 1):
+        # D'abord, effacer toute la feuille pour éviter les données résiduelles
+        # Mais préserver les formules si elles existent dans des cellules non modifiées
+        for row in sheet.iter_rows():
             for cell in row:
-                cell.value = None
+                # Conserver les formules dans les cellules hors de la zone d'édition
+                row_idx = cell.row - start_row
+                col_idx = cell.column - start_col
+                
+                if 0 <= row_idx < len(df) and 0 <= col_idx < len(df.columns):
+                    # Cette cellule sera mise à jour, on peut l'effacer
+                    cell.value = None
         
         # Écrire les nouvelles données
         for r_idx, row in enumerate(df.values):
             for c_idx, value in enumerate(row):
                 try:
-                    # Écrire toutes les valeurs, y compris les cellules vides
-                    # pour s'assurer que les suppressions sont prises en compte
-                    if pd.notna(value) and str(value).strip() != '':
-                        # Convertir les valeurs pour éviter les problèmes de type
-                        if isinstance(value, (int, float)):
-                            sheet.cell(row=start_row + r_idx, column=start_col + c_idx, value=value)
-                        else:
-                            sheet.cell(row=start_row + r_idx, column=start_col + c_idx, value=str(value))
+                    cell = sheet.cell(row=start_row + r_idx, column=start_col + c_idx)
+                    
+                    # Gérer les différents types de valeurs
+                    if pd.isna(value) or value is None or str(value).strip() == '':
+                        cell.value = None
+                    elif isinstance(value, str) and value.startswith('='):
+                        # C'est une formule
+                        cell.value = value
+                    elif isinstance(value, (int, float)):
+                        # Nombre
+                        cell.value = value
                     else:
-                        # Explicitement mettre None pour les cellules vides
-                        sheet.cell(row=start_row + r_idx, column=start_col + c_idx, value=None)
+                        # Tout le reste en string
+                        cell.value = str(value)
                         
                 except Exception as e:
                     logger.warning(f"Erreur écriture cellule ({start_row + r_idx}, {start_col + c_idx}): {str(e)}")
         
-        logger.info(f"DataFrame écrit dans la feuille '{sheet_name}'")
+        logger.info(f"DataFrame écrit dans la feuille '{sheet_name}' ({len(df)} lignes)")
         
+        # Sauvegarder le workbook dans un fichier temporaire pour mettre à jour current_path
+        with tempfile.NamedTemporaryFile(delete=False, suffix='.xlsx') as tmp:
+            workbook.save(tmp.name)
+            self.current_path = tmp.name
+            self.temp_files.append(tmp.name)
+    
     def get_sheet_info(self, workbook: openpyxl.Workbook) -> Dict[str, Any]:
         """Récupère les informations sur les feuilles du workbook"""
         info = {
