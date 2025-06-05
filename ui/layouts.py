@@ -272,10 +272,10 @@ class MainLayout:
                     st.rerun()
 
             with col2:
-                # Toggle valeurs/formules
+                # Mode d'affichage
                 display_mode = st.selectbox(
-                    "Afficher",
-                    ["Valeurs", "Formules"],
+                    "Mode",
+                    ["Édition", "Aperçu", "Formules"],
                     key="display_mode_toggle"
                 )
 
@@ -295,117 +295,162 @@ class MainLayout:
                         st.caption(f"⚠️ {len(errors)} erreurs")
 
             with col5:
-                st.download_button(
-                    "💾",
-                    data=self.services['excel_handler'].save_workbook_to_bytes(wb),
-                    file_name=f"export_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx",
-                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-                )
+                # Remplacez temporairement le bouton de téléchargement par ceci :
+                try:
+                    excel_bytes = self.services['excel_handler'].save_workbook_to_bytes(wb)
+                    
+                    # Vérifier la taille
+                    st.caption(f"Taille du fichier: {len(excel_bytes)} octets")
+                    
+                    
+                    st.download_button(
+                        "💾 Télécharger",
+                        data=excel_bytes,
+                        file_name=f"export_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx",
+                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                    )
+                except Exception as e:
+                    st.error(f"Erreur export: {str(e)}")
+                    # Alternative : sauvegarder directement sur le disque
+                    temp_file = f"/tmp/debug_export_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx"
+                    if self.services['excel_handler'].save_workbook_to_file(wb, temp_file):
+                        st.info(f"Fichier sauvegardé dans: {temp_file}")
                         
-            # Display data
+            # Display data selon le mode
             if selected_sheet:
                 try:
-                    # Charger les données de la feuille
-                    df = self.services['excel_handler'].sheet_to_dataframe(
-                        wb, 
-                        selected_sheet,
-                        show_formulas=(display_mode == "Formules")
-                    )
-                    
-                    # Assurer que le DataFrame a une taille minimale pour l'édition
-                    if df.empty or len(df) < 20 or len(df.columns) < 10:
-                        # Étendre le DataFrame
-                        min_rows = max(20, len(df))
-                        min_cols = max(10, len(df.columns))
+                    if display_mode == "Aperçu":
+                        # Mode aperçu avec mise en forme
+                        st.markdown("### 👁️ Aperçu avec mise en forme")
                         
-                        # Créer un nouveau DataFrame avec la taille minimale
-                        new_df = pd.DataFrame(index=range(min_rows), columns=range(min_cols))
+                        # Options d'aperçu
+                        col1, col2 = st.columns(2)
+                        with col1:
+                            max_rows = st.number_input("Lignes max", min_value=10, max_value=500, value=100, step=10, key="preview_rows")
+                        with col2:
+                            max_cols = st.number_input("Colonnes max", min_value=5, max_value=50, value=20, step=5, key="preview_cols")
                         
-                        # Copier les données existantes
-                        if not df.empty:
-                            for i in range(min(len(df), min_rows)):
-                                for j in range(min(len(df.columns), min_cols)):
-                                    new_df.iloc[i, j] = df.iloc[i, j] if i < len(df) and j < len(df.columns) else None
+                        # Générer et afficher le HTML
+                        with st.spinner("Génération de l'aperçu..."):
+                            try:
+                                html_content = self.services['excel_handler'].sheet_to_html(
+                                    wb, selected_sheet, max_rows=max_rows, max_cols=max_cols
+                                )
+                                st.markdown(html_content, unsafe_allow_html=True)
+                            except Exception as e:
+                                st.error(f"Erreur génération aperçu: {str(e)}")
+                                logger.error(f"Erreur aperçu: {str(e)}", exc_info=True)
                         
-                        df = new_df
-                    
-                    # Simple info avec debug info
-                    debug_info = f"ID: {editor_key}" if st.session_state.get('debug_mode', False) else ""
-                    
-                    # Vérifier si des formules sont présentes dans les données affichées
-                    has_formulas = False
-                    if display_mode == "Valeurs":
+                        st.info("ℹ️ Mode aperçu : visualisation uniquement. Utilisez le mode 'Édition' pour modifier les données.")
+                        
+                    elif display_mode == "Formules":
+                        # Mode formules
+                        df = self.services['excel_handler'].sheet_to_dataframe(
+                            wb, selected_sheet, show_formulas=True
+                        )
+                        
+                        st.caption(f"📊 {selected_sheet} - Mode Formules - {len(df)} lignes × {len(df.columns)} colonnes")
+                        
+                        # Data editor en mode lecture seule pour les formules
+                        st.dataframe(
+                            df,
+                            use_container_width=True,
+                            height=400
+                        )
+                        
+                        st.info("ℹ️ Mode formules : affiche les formules Excel. Utilisez le mode 'Édition' pour modifier.")
+                        
+                    else:  # Mode Édition
+                        # Charger les données de la feuille
+                        df = self.services['excel_handler'].sheet_to_dataframe(
+                            wb, selected_sheet, show_formulas=False
+                        )
+                        
+                        # Assurer que le DataFrame a une taille minimale pour l'édition
+                        if df.empty or len(df) < 20 or len(df.columns) < 10:
+                            # Étendre le DataFrame
+                            min_rows = max(20, len(df))
+                            min_cols = max(10, len(df.columns))
+                            
+                            # Créer un nouveau DataFrame avec la taille minimale
+                            new_df = pd.DataFrame(index=range(min_rows), columns=range(min_cols))
+                            
+                            # Copier les données existantes
+                            if not df.empty:
+                                for i in range(min(len(df), min_rows)):
+                                    for j in range(min(len(df.columns), min_cols)):
+                                        new_df.iloc[i, j] = df.iloc[i, j] if i < len(df) and j < len(df.columns) else None
+                            
+                            df = new_df
+                        
+                        # Vérifier si des formules sont présentes dans les données affichées
+                        has_formulas = False
                         for col in df.columns:
                             if df[col].astype(str).str.startswith('[=', na=False).any():
                                 has_formulas = True
                                 break
-                    
-                    caption_text = f"📊 {selected_sheet} - {len(df)} lignes × {len(df.columns)} colonnes {debug_info}"
-                    if has_formulas and display_mode == "Valeurs":
-                        caption_text += " ⚠️ Formules détectées (valeurs non calculées)"
-                    
-                    st.caption(caption_text)
-                    
-                    # Créer une clé unique pour chaque combinaison feuille + mode
-                    editor_key = f"excel_editor_{selected_sheet}_{display_mode}"
-                    
-                    # Configuration du data editor
-                    column_config = {}
-                    for col in df.columns:
-                        column_config[col] = st.column_config.TextColumn(
-                            str(col),
-                            help=f"Colonne {col}",
-                            default="",
-                            max_chars=None,
-                            validate=None
+                        
+                        caption_text = f"📊 {selected_sheet} - Mode Édition - {len(df)} lignes × {len(df.columns)} colonnes"
+                        if has_formulas:
+                            caption_text += " ⚠️ Formules détectées (valeurs non calculées)"
+                        
+                        st.caption(caption_text)
+                        
+                        # Créer une clé unique pour chaque combinaison feuille + mode
+                        editor_key = f"excel_editor_{selected_sheet}_edit"
+                        
+                        # Configuration du data editor
+                        column_config = {}
+                        for col in df.columns:
+                            column_config[col] = st.column_config.TextColumn(
+                                str(col),
+                                help=f"Colonne {col}",
+                                default="",
+                                max_chars=None,
+                                validate=None
+                            )
+                        
+                        # Data editor avec configuration améliorée
+                        edited_df = st.data_editor(
+                            df,
+                            use_container_width=True,
+                            height=400,
+                            num_rows="dynamic",
+                            key=editor_key,
+                            column_config=column_config,
+                            hide_index=False,
+                            disabled=False  # S'assurer que l'édition est activée
                         )
+                        
+                        # Bouton de sauvegarde toujours visible pour éviter les problèmes de détection
+                        col1, col2, col3 = st.columns([1, 2, 1])
+                        with col2:
+                            if st.button("💾 Sauvegarder les modifications"):
+                                try:
+                                    # IMPORTANT: Utiliser le MÊME workbook, pas en créer un nouveau
+                                    self.services['excel_handler'].dataframe_to_sheet(
+                                        edited_df, 
+                                        st.session_state.excel_workbook,  # Le workbook ORIGINAL
+                                        selected_sheet
+                                    )
+                                    
+                                    # L'export conservera maintenant TOUTE la mise en forme
+                                    excel_bytes = self.services['excel_handler'].save_workbook_to_bytes(
+                                        st.session_state.excel_workbook
+                                    )
+                                    
+                                    st.success("✅ Modifications sauvegardées avec mise en forme préservée!")
+                                except Exception as e:
+                                    st.error(f"❌ Erreur: {str(e)}")
+                                                    
+                        # Aide pour l'utilisateur
+                        st.info("""
+                        💡 **Aide pour l'édition** : Double-cliquez sur une cellule pour la modifier. 
+                        Utilisez Tab ou Enter pour naviguer. Cliquez sur "+" pour ajouter des lignes. 
+                        Sauvegardez vos modifications avec le bouton 💾.
+                        """)
                     
-                    # Data editor avec configuration améliorée
-                    edited_df = st.data_editor(
-                        df,
-                        use_container_width=True,
-                        height=400,
-                        num_rows="dynamic",
-                        key=editor_key,
-                        column_config=column_config,
-                        hide_index=False,
-                        disabled=False  # S'assurer que l'édition est activée
-                    )
-                    
-                    # Bouton de sauvegarde toujours visible pour éviter les problèmes de détection
-                    col1, col2, col3 = st.columns([1, 2, 1])
-                    with col2:
-                        if st.button("💾 Sauvegarder les modifications", 
-                                type="primary", 
-                                use_container_width=True,
-                                key=f"save_btn_{selected_sheet}"):
-                            try:
-                                # Sauvegarder les modifications
-                                self.services['excel_handler'].dataframe_to_sheet(
-                                    edited_df, wb, selected_sheet
-                                )
-                                
-                                # Mettre à jour le workbook en session
-                                st.session_state.excel_workbook = wb
-                                
-                                st.success(f"✅ Modifications sauvegardées dans {selected_sheet}!")
-                                
-                                # Forcer le rechargement pour afficher les nouvelles valeurs
-                                time.sleep(0.5)
-                                st.rerun()
-                                
-                            except Exception as e:
-                                st.error(f"❌ Erreur lors de la sauvegarde: {str(e)}")
-                                logger.error(f"Erreur sauvegarde: {str(e)}", exc_info=True)
-                    
-                    # Aide pour l'utilisateur - utiliser info au lieu d'expander
-                    st.info("""
-                    💡 **Aide pour l'édition** : Double-cliquez sur une cellule pour la modifier. 
-                    Utilisez Tab ou Enter pour naviguer. Cliquez sur "+" pour ajouter des lignes. 
-                    Sauvegardez vos modifications avec le bouton 💾.
-                    """)
-                    
-                    # Afficher les détails des formules parsées si disponibles
+                    # Afficher les détails des formules parsées si disponibles (pour tous les modes)
                     if st.session_state.get('parsed_formulas'):
                         formulas = st.session_state.parsed_formulas
                         stats = formulas.get('statistics', {})
@@ -432,8 +477,7 @@ class MainLayout:
                                     st.info("""
                                     💡 **Pour voir les valeurs calculées** : 
                                     1. Cliquez sur "⚡ Appliquer" pour calculer les formules
-                                    2. Sélectionnez "Valeurs" dans le menu déroulant "Afficher"
-                                    3. Les résultats s'afficheront à la place des formules
+                                    2. Les résultats seront visibles dans tous les modes
                                     """)
                                 
                                 # Bouton pour télécharger le script Python généré
@@ -472,7 +516,6 @@ class MainLayout:
                                 else:
                                     st.success("✅ Aucune erreur détectée")
 
-                            # Et pour tab3 (exemples), simplifier aussi :
                             with tab3:
                                 # Exemples de formules converties
                                 if formulas.get('formulas'):
@@ -505,7 +548,7 @@ class MainLayout:
                 except Exception as e:
                     st.error(f"Erreur affichage: {str(e)}")
                     logger.error(f"Erreur affichage feuille {selected_sheet}: {str(e)}", exc_info=True)
-    
+
     def _render_excel_analysis_tab(self, on_tool_action: Callable):
         """Renders simplified analysis tab"""
         # Check prerequisites
@@ -666,42 +709,67 @@ class MainLayout:
             
             df = pd.DataFrame(st.session_state.extracted_data)
             
-            # Summary metrics
-            col1, col2, col3 = st.columns(3)
-            with col1:
-                st.metric("Entrées", len(df))
+            # Ajouter la colonne Sheet si elle n'existe pas
+            if 'Sheet' not in df.columns:
+                # Si un Excel est chargé, proposer les sheets
+                if st.session_state.get('excel_workbook'):
+                    sheets = st.session_state.excel_workbook.sheetnames
+                    df['Sheet'] = sheets[0] if sheets else 'Sheet1'
+                else:
+                    df['Sheet'] = 'Sheet1'
             
-            # Editable data
-            edited_df = st.data_editor(
-                df,
-                use_container_width=True,
-                num_rows="dynamic",
-                height=300,
-                key="budget_data_editor"
-            )
-            
-            # Action buttons
-            col1, col2 = st.columns(2)
-            with col1:
-                csv = edited_df.to_csv(index=False)
-                st.download_button(
-                    "📥 Exporter CSV",
-                    data=csv,
-                    file_name=f"budget_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
-                    mime="text/csv",
-                    use_container_width=True
+            # Configuration des colonnes pour le data editor
+            column_config = {
+                'Sheet': st.column_config.SelectboxColumn(
+                    "Feuille cible",
+                    help="Sélectionnez la feuille Excel où placer cette donnée",
+                    options=st.session_state.excel_workbook.sheetnames if st.session_state.get('excel_workbook') else ['Sheet1'],
+                    required=True
+                ),
+                'Montant': st.column_config.NumberColumn(
+                    "Montant",
+                    format="%.2f €"
+                ),
+                'Probabilite': st.column_config.NumberColumn(
+                    "Probabilité",
+                    format="%.0f%%",
+                    min_value=0,
+                    max_value=100
                 )
+            }
+        
+        # Editable data avec configuration
+        edited_df = st.data_editor(
+            df,
+            column_config=column_config,
+            use_container_width=True,
+            num_rows="dynamic",
+            height=300,
+            key="budget_data_editor_with_sheets"
+        )
             
-            with col2:
-                if st.session_state.get('json_data') and st.session_state.get('excel_workbook'):
-                    if st.button("🎯 Mapper vers Excel", use_container_width=True, type="secondary"):
-                        on_tool_action({'action': 'map_budget_cells'})
-                        
-            # Save changes if modified
-            if not df.equals(edited_df):
-                if st.button("💾 Sauvegarder les modifications", use_container_width=True):
-                    st.session_state.extracted_data = edited_df.to_dict('records')
-                    st.success("✅ Données mises à jour!")
+        # Action buttons
+        col1, col2 = st.columns(2)
+        with col1:
+            csv = edited_df.to_csv(index=False)
+            st.download_button(
+                "📥 Exporter CSV",
+                data=csv,
+                file_name=f"budget_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
+                mime="text/csv",
+                use_container_width=True
+            )
+        
+        with col2:
+            if st.session_state.get('json_data') and st.session_state.get('excel_workbook'):
+                if st.button("🎯 Mapper vers Excel", use_container_width=True, type="secondary"):
+                    on_tool_action({'action': 'map_budget_cells'})
+                    
+        # Save changes if modified
+        if not df.equals(edited_df):
+            if st.button("💾 Sauvegarder les modifications", use_container_width=True):
+                st.session_state.extracted_data = edited_df.to_dict('records')
+                st.success("✅ Données mises à jour!")
     
     def _render_excel_tools_tab(self, on_tool_action: Callable):
         """Renders simplified BPSS tool"""

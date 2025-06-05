@@ -8,6 +8,8 @@ import asyncio
 from collections import defaultdict
 from datetime import datetime
 import json
+from modules.embeddings_manager import EmbeddingResult, EmbeddingsManager
+
 
 logger = logging.getLogger(__name__)
 
@@ -17,6 +19,7 @@ class BudgetMapper:
     def __init__(self, llm_client):
         self.llm_client = llm_client
         self.mapping_cache = {}
+        self.embeddings_manager = EmbeddingsManager()
         self.batch_size = 5
         self.max_tags_per_batch = 50
         
@@ -33,93 +36,142 @@ class BudgetMapper:
     
     async def map_entries_to_cells(self, entries: List[Dict], tags: List[Dict], 
                                   progress_callback=None) -> List[Dict]:
-        """Mappe les entrées budgétaires aux cellules Excel de manière itérative"""
+        """Nouvelle méthode de mapping avec embeddings"""
         if not entries or not tags:
             return []
+            
+        # Construire l'index d'embeddings
+        self.embeddings_manager.build_index(tags)
         
-        logger.info(f"Début du mapping: {len(entries)} entrées vers {len(tags)} tags")
-        
-        # Enrichir les tags avec des métadonnées
-        enriched_tags = self._enrich_tags(tags)
-        
-        # Créer des index pour accélérer la recherche
-        tag_indexes = self._build_comprehensive_indexes(enriched_tags)
-        
-        # Résultats du mapping
         all_mappings = []
+        total_entries = len(entries)
         
-        # Traiter les entrées par batch
-        total_batches = (len(entries) - 1) // self.batch_size + 1
-        
-        for batch_idx in range(0, len(entries), self.batch_size):
-            batch_entries = entries[batch_idx:batch_idx + self.batch_size]
-            current_batch = batch_idx // self.batch_size + 1
-            
-            logger.info(f"Traitement du batch {current_batch}/{total_batches}")
-            
+        for idx, entry in enumerate(entries):
             if progress_callback:
-                progress = (batch_idx / len(entries)) * 100
-                progress_callback(progress, f"Traitement batch {current_batch}/{total_batches}")
-            
-            batch_mappings = []
-            
-            for entry in batch_entries:
-                # Enrichir l'entrée avec des métadonnées
-                enriched_entry = self._enrich_entry(entry)
+                progress = (idx / total_entries) * 100
+                progress_callback(progress, f"Mapping {idx+1}/{total_entries}")
                 
-                # Utiliser le cache si disponible
-                cache_key = self._get_cache_key(entry)
-                if cache_key in self.mapping_cache:
-                    batch_mappings.append(self.mapping_cache[cache_key])
-                    continue
+            # Récupérer la sheet assignée
+            target_sheet = entry.get('Sheet')
+            
+            # Construire la requête de recherche
+            query = self._build_search_query(entry)
+            
+            # Recherche par embeddings (top 20 pour avoir de la marge)
+            similar_tags = self.embeddings_manager.search_similar_tags(
+                query, 
+                sheet_filter=target_sheet,
+                k=20
+            )
+            
+            if not similar_tags:
+                # Fallback : recherche sans filtre de sheet
+                similar_tags = self.embeddings_manager.search_similar_tags(query, k=20)
                 
-                # Trouver les tags candidats
-                candidate_tags = self._find_candidate_tags_advanced(
-                    enriched_entry, tag_indexes, enriched_tags
+            if not similar_tags:
+                # Aucun tag trouvé
+                all_mappings.append(self._create_empty_mapping(entry))
+                continue
+                
+            # Si score très élevé (>0.9), prendre directement
+            if similar_tags[0].score > 0.9:
+                best_tag = similar_tags[0].tag
+                mapping = self._create_detailed_mapping(
+                    entry, best_tag, similar_tags[0].score
                 )
-                
-                if not candidate_tags:
-                    logger.warning(f"Aucun tag candidat pour: {entry.get('Description', '')}")
-                    # Créer un mapping vide pour tracking
-                    empty_mapping = self._create_empty_mapping(entry)
-                    batch_mappings.append(empty_mapping)
-                    continue
-                
-                # Décision de mapping
-                if len(candidate_tags) == 1 and candidate_tags[0]['score'] > 0.85:
-                    # Mapping évident
-                    best_tag = candidate_tags[0]['tag']
-                    mapping = self._create_detailed_mapping(entry, best_tag, candidate_tags[0]['score'])
-                    batch_mappings.append(mapping)
-                    self.mapping_cache[cache_key] = mapping
-                elif candidate_tags[0]['score'] > 0.7:
-                    # Probablement bon, prendre le meilleur
-                    best_tag = candidate_tags[0]['tag']
-                    mapping = self._create_detailed_mapping(entry, best_tag, candidate_tags[0]['score'])
-                    batch_mappings.append(mapping)
-                    self.mapping_cache[cache_key] = mapping
+                all_mappings.append(mapping)
+            else:
+                # Utiliser le LLM pour choisir parmi les top 10
+                top_candidates = similar_tags[:10]
+                best_mapping = await self._llm_select_from_candidates(
+                    entry, top_candidates
+                )
+                if best_mapping:
+                    all_mappings.append(best_mapping)
                 else:
-                    # Cas ambigu, utiliser le LLM
-                    best_mapping = await self._llm_select_best_tag_advanced(
-                        enriched_entry, candidate_tags[:10]  # Top 10 candidats
+                    # Fallback sur le meilleur score
+                    best_tag = similar_tags[0].tag
+                    mapping = self._create_detailed_mapping(
+                        entry, best_tag, similar_tags[0].score
                     )
-                    if best_mapping:
-                        batch_mappings.append(best_mapping)
-                        self.mapping_cache[cache_key] = best_mapping
-                    else:
-                        # Fallback sur le meilleur score
-                        best_tag = candidate_tags[0]['tag']
-                        mapping = self._create_detailed_mapping(entry, best_tag, candidate_tags[0]['score'])
-                        batch_mappings.append(mapping)
-            
-            all_mappings.extend(batch_mappings)
-            
-            # Pause entre les batches pour éviter le rate limiting
-            if batch_idx + self.batch_size < len(entries):
-                await asyncio.sleep(1.5)  # Augmenter la pause pour respecter les limites de l'API
-        
-        logger.info(f"Mapping terminé: {len(all_mappings)} mappings créés")
+                    all_mappings.append(mapping)
+                    
         return all_mappings
+
+    def _build_search_query(self, entry: Dict) -> str:
+        """Construit une requête optimisée pour la recherche"""
+        parts = []
+        
+        # Prioriser les champs importants
+        if entry.get('Axe'):
+            parts.append(f"Axe {entry['Axe']}")
+        if entry.get('Description'):
+            parts.append(entry['Description'])
+        if entry.get('Nature'):
+            parts.append(f"{entry['Nature']}")
+        if entry.get('Montant'):
+            # Ajouter l'ordre de grandeur
+            montant = entry['Montant']
+            if montant >= 1_000_000:
+                parts.append("millions euros")
+            elif montant >= 1_000:
+                parts.append("milliers euros")
+                
+        return " ".join(parts)
+
+    async def _llm_select_from_candidates(self, entry: Dict, 
+                                        candidates: List[EmbeddingResult]) -> Optional[Dict]:
+        """Utilise le LLM pour sélectionner le meilleur candidat parmi le top 10"""
+        
+        # Préparer le prompt
+        entry_desc = f"""
+Entrée budgétaire:
+- Axe: {entry.get('Axe', 'N/A')}
+- Description: {entry.get('Description', 'N/A')}
+- Montant: {entry.get('Montant', 'N/A')}
+- Nature: {entry.get('Nature', 'N/A')}
+- Sheet cible: {entry.get('Sheet', 'N/A')}
+"""
+        
+        candidates_desc = []
+        for i, candidate in enumerate(candidates):
+            tag = candidate.tag
+            labels_preview = ', '.join(str(l)[:50] for l in tag.get('labels', [])[:3])
+            candidates_desc.append(
+                f"{i}) {tag.get('sheet_name')}!{tag.get('cell_address')} "
+                f"[Score: {candidate.score:.3f}]\n   Labels: {labels_preview}"
+            )
+            
+        prompt = f"""{entry_desc}
+
+Candidats (classés par similarité):
+{chr(10).join(candidates_desc)}
+
+Choisis le numéro (0-9) de la cellule la plus appropriée ou 'AUCUN' si aucune ne convient."""
+        
+        try:
+            response = await self.llm_client.chat([
+                {"role": "system", "content": "Tu es un expert en mapping budgétaire. Réponds uniquement avec le numéro ou 'AUCUN'."},
+                {"role": "user", "content": prompt}
+            ])
+            
+            if response:
+                import re
+                match = re.search(r'\b(\d)\b', response)
+                if match:
+                    idx = int(match.group(1))
+                    if 0 <= idx < len(candidates):
+                        selected = candidates[idx]
+                        return self._create_detailed_mapping(
+                            entry, 
+                            selected.tag,
+                            selected.score,
+                            ["embedding_similarity", f"llm_selected_from_{len(candidates)}"]
+                        )
+        except Exception as e:
+            logger.error(f"Erreur LLM: {str(e)}")
+            
+        return None
     
     def _enrich_entry(self, entry: Dict) -> Dict:
         """Enrichit une entrée avec des métadonnées supplémentaires"""

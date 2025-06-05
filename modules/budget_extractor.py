@@ -17,30 +17,39 @@ class BudgetExtractor:
             '€': 1
         }
     
-    async def extract(self, content: str, llm_client) -> List[Dict]:
-        """Extrait les données budgétaires du contenu"""
+    async def extract(self, content: str, llm_client, excel_sheets: List[str] = None) -> List[Dict]:
+        """Extrait les données budgétaires avec assignation de sheet"""
         try:
-            # Utiliser le LLM pour extraction structurée
-            budget_data = await llm_client.extract_budget_data(content)
+            # Prompt modifié pour inclure les sheets disponibles
+            if excel_sheets:
+                sheets_info = f"\nSheets disponibles dans l'Excel : {', '.join(excel_sheets)}"
+                prompt = (
+                    "Tu es un assistant budgétaire. "
+                    "Analyse le texte et retourne un tableau JSON avec les données budgétaires. "
+                    f"{sheets_info}\n"
+                    "Pour chaque entrée, ajoute un champ 'Sheet' avec le nom de la feuille la plus appropriée. "
+                    "Format: [{\"Axe\":..., \"Description\":..., \"Montant\":..., \"Sheet\":..., ...}]"
+                )
+            else:
+                # Prompt classique sans sheets
+                prompt = "..."
+                
+            # Extraction avec le LLM
+            budget_data = await llm_client.extract_budget_data_with_prompt(content, prompt)
             
-            if not budget_data:
-                logger.warning("Aucune donnée budgétaire extraite par le LLM")
-                return []
-            
-            # Enrichir avec les phrases sources
-            enriched_data = self._attach_source_phrases(budget_data, content)
-            
-            # Normaliser les montants
-            for entry in enriched_data:
-                if 'Montant' in entry:
-                    entry['Montant'] = self._normalize_amount(str(entry['Montant']))
-            
-            return enriched_data
+            # Si pas de sheets dans la réponse mais qu'on a des sheets Excel
+            if excel_sheets and budget_data:
+                for entry in budget_data:
+                    if 'Sheet' not in entry:
+                        # Assigner une sheet par défaut basée sur des mots-clés
+                        entry['Sheet'] = self._guess_sheet(entry, excel_sheets)
+                        
+            return budget_data
             
         except Exception as e:
-            logger.error(f"Erreur extraction budget: {str(e)}")
+            logger.error(f"Erreur extraction: {str(e)}")
             return []
-    
+
     def _normalize_amount(self, amount_str: str) -> float:
         """Normalise un montant en nombre"""
         # Nettoyer la chaîne
