@@ -1,4 +1,4 @@
-# modules/bpss_tool.py
+# modules/bpss_tool.py - VERSION CORRIGÉE
 import pandas as pd
 import openpyxl
 from typing import Optional, Dict, Any
@@ -7,7 +7,7 @@ import logging
 logger = logging.getLogger(__name__)
 
 class BPSSTool:
-    """Outil BPSS pour traitement des fichiers budgétaires"""
+    """Outil BPSS pour traitement des fichiers budgétaires - VERSION CORRIGÉE"""
     
     def __init__(self):
         self.config = {
@@ -126,8 +126,8 @@ class BPSSTool:
     def _load_ppes_data(self, wb: openpyxl.Workbook, df_pp_categ: pd.DataFrame,
                        df_entrants: pd.DataFrame, df_sortants: pd.DataFrame,
                        program_code: str) -> openpyxl.Workbook:
-        """Charge les données PP-E-S dans le workbook"""
-        # Filtrer par programme
+        """Charge les données PP-E-S dans le workbook - VERSION CORRIGÉE"""
+        # Filtrer par programme (3 premiers caractères)
         code_prefix = program_code[:3]
         
         df1 = df_pp_categ[df_pp_categ['nom_prog'].astype(str).str[:3] == code_prefix]
@@ -141,51 +141,115 @@ class BPSSTool:
         
         sheet = wb[sheet_name]
         
-        # Écrire les données
+        # Écrire les données - CORRECTION: utiliser colonne 2 (B) au lieu de 3 (C)
         start_rows = [7, 113, 218]  # Positions de départ
         dataframes = [df1, df2, df3]
         
         for start_row, df in zip(start_rows, dataframes):
-            for r_idx, row in enumerate(df.values):
+            # Limiter à 100 lignes comme dans le VBA
+            df_limited = df.head(100)
+            
+            for r_idx, row in enumerate(df_limited.values):
                 for c_idx, value in enumerate(row):
-                    sheet.cell(row=start_row + r_idx, column=3 + c_idx, value=value)
+                    # CORRECTION: column=2 pour commencer en B au lieu de C
+                    sheet.cell(row=start_row + r_idx, column=2 + c_idx, value=value)
         
-        # Traitement spécial "Indicié"
-        df_indicie = df1[df1.get('marqueur_masse_indiciaire', '') == 'Indicié']
-        if not df_indicie.empty:
+        # Traitement spécial "Indicié" - CORRECTION v2
+        # La colonne "marqueur_masse_indiciaire" pourrait être à différents endroits
+        # Essayons plusieurs colonnes possibles
+        df_indicie = None
+        
+        # Chercher la colonne qui contient "Indicié"
+        for col in df1.columns:
+            if 'Indicié' in df1[col].astype(str).values:
+                df_indicie = df1[df1[col] == 'Indicié']
+                logger.info(f"Colonne 'Indicié' trouvée : {col}")
+                break
+        
+        if df_indicie is None or df_indicie.empty:
+            logger.warning("Aucune donnée 'Indicié' trouvée dans PP-E-S")
+        else:
             if 'Accueil' not in wb.sheetnames:
                 wb.create_sheet('Accueil')
             
             accueil_sheet = wb['Accueil']
-            if len(df_indicie.columns) > 5:
-                accueil_sheet.cell(row=43, column=2, value=df_indicie.iloc[0, 1])
-                accueil_sheet.cell(row=43, column=3, value=df_indicie.iloc[0, 5])
+            
+            # Nettoyer d'abord les anciennes données
+            for row in range(43, 55):  # B43:C54
+                accueil_sheet.cell(row=row, column=2, value=None)  # Colonne B
+                accueil_sheet.cell(row=row, column=3, value=None)  # Colonne C
+            
+            # Écrire les nouvelles données
+            row_dest = 43
+            for idx, row_data in enumerate(df_indicie.values):
+                if row_dest > 54:  # Ne pas dépasser la ligne 54
+                    break
+                
+                # NOUVELLE LOGIQUE : 
+                # - Chercher la colonne qui contient le code ET le nom (format "1320 : Enseignants-chercheurs")
+                # - Si on trouve ce format, extraire le code et le nom
+                # - Sinon, utiliser les colonnes comme avant
+                
+                code_categorie = None
+                nom_categorie = None
+                
+                # Parcourir les colonnes pour trouver le pattern "code : nom"
+                for val in row_data:
+                    if isinstance(val, str) and ' : ' in val and val[0].isdigit():
+                        # C'est probablement la colonne avec "1320 : Enseignants-chercheurs"
+                        parts = val.split(' : ', 1)
+                        if len(parts) == 2:
+                            code_categorie = parts[0].strip()
+                            nom_categorie = parts[1].strip()
+                            break
+                
+                # Si on n'a pas trouvé le pattern, essayer l'ancienne méthode
+                if code_categorie is None and len(row_data) > 4:
+                    # Chercher un code numérique dans les premières colonnes
+                    for i in range(min(3, len(row_data))):
+                        val = str(row_data[i])
+                        if val.isdigit() and len(val) == 4:  # Code à 4 chiffres
+                            code_categorie = val
+                            # Le nom est probablement dans une colonne suivante
+                            for j in range(i+1, len(row_data)):
+                                if isinstance(row_data[j], str) and len(row_data[j]) > 10:
+                                    nom_categorie = row_data[j]
+                                    break
+                            break
+                
+                # Écrire dans Accueil si on a trouvé les données
+                if code_categorie and nom_categorie:
+                    accueil_sheet.cell(row=row_dest, column=2, value=code_categorie)  # B43, B44...
+                    accueil_sheet.cell(row=row_dest, column=3, value=nom_categorie)   # C43, C44...
+                    row_dest += 1
+                else:
+                    logger.warning(f"Impossible d'extraire code/nom de la ligne: {row_data[:5]}")
         
         logger.info("Données PP-E-S chargées")
         return wb
     
     def _load_dpp18_data(self, wb: openpyxl.Workbook, df_dpp18: pd.DataFrame,
                         program_code: str) -> openpyxl.Workbook:
-        """Charge les données DPP18 dans le workbook"""
+        """Charge les données DPP18 dans le workbook - VERSION CORRIGÉE"""
         sheet_name = "INF DPP 18"
         if sheet_name not in wb.sheetnames:
             wb.create_sheet(sheet_name)
         
         sheet = wb[sheet_name]
         
-        # Header (5 premières lignes)
+        # Header (5 premières lignes) - écrire à partir de colonne B
         header = df_dpp18.head(5)
         for r_idx, row in enumerate(header.values):
             for c_idx, value in enumerate(row):
                 sheet.cell(row=1 + r_idx, column=2 + c_idx, value=value)
         
-        # Filtrage par programme
+        # Filtrage par programme sur la colonne A (index 0)
         code_prefix = program_code[:3]
         df_filtered = df_dpp18[
             df_dpp18.iloc[:, 0].astype(str).str.contains(code_prefix, na=False)
         ]
         
-        # Écrire les données filtrées
+        # Écrire les données filtrées à partir de la ligne 6
         for r_idx, row in enumerate(df_filtered.values):
             for c_idx, value in enumerate(row):
                 sheet.cell(row=6 + r_idx, column=2 + c_idx, value=value)
@@ -195,27 +259,27 @@ class BPSSTool:
     
     def _load_bud45_data(self, wb: openpyxl.Workbook, df_bud45: pd.DataFrame,
                         program_code: str) -> openpyxl.Workbook:
-        """Charge les données BUD45 dans le workbook"""
+        """Charge les données BUD45 dans le workbook - VERSION CORRIGÉE"""
         sheet_name = "INF BUD 45"
         if sheet_name not in wb.sheetnames:
             wb.create_sheet(sheet_name)
         
         sheet = wb[sheet_name]
         
-        # Header
+        # Header (5 premières lignes) - écrire à partir de colonne B
         header = df_bud45.head(5)
         for r_idx, row in enumerate(header.values):
             for c_idx, value in enumerate(row):
                 sheet.cell(row=1 + r_idx, column=2 + c_idx, value=value)
         
-        # Filtrage par programme (colonne 2)
+        # Filtrage par programme sur la colonne B (index 1)
         code_prefix = program_code[:3]
         if len(df_bud45.columns) > 1:
             df_filtered = df_bud45[
                 df_bud45.iloc[:, 1].astype(str).str.contains(code_prefix, na=False)
             ]
             
-            # Écrire les données filtrées
+            # Écrire les données filtrées à partir de la ligne 6
             for r_idx, row in enumerate(df_filtered.values):
                 for c_idx, value in enumerate(row):
                     sheet.cell(row=6 + r_idx, column=2 + c_idx, value=value)
