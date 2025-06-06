@@ -98,9 +98,14 @@ class BPSSTool:
                 df_bud45 = pd.read_excel(bud45_path, sheet_name=0)
             
             # Appliquer les traitements
+            target_workbook = self._completion_accueil(
+                target_workbook, year, ministry_code, program_code
+            )
+            print("OK1")
             target_workbook = self._load_ppes_data(
                 target_workbook, df_pp_categ, df_entrants, df_sortants, program_code
             )
+            print("OK2")
             target_workbook = self._load_dpp18_data(
                 target_workbook, df_dpp18, program_code
             )
@@ -123,6 +128,20 @@ class BPSSTool:
             'sortants': f"MIN_{ministry_code}_DETAIL_Prog_Sortants"
         }
     
+    def _completion_accueil(self, wb: openpyxl.Workbook, year: int, ministry_code:str, program_code:str) -> openpyxl.Workbook:
+        """Completion de la page accueil"""
+        accueil_sheet = wb['Accueil']
+            
+        accueil_sheet.cell(row=34, column=3, value=year)
+        accueil_sheet.cell(row=35, column=3, value=year+1)
+            
+        accueil_sheet.cell(row=37, column=4, value=ministry_code)
+        accueil_sheet.cell(row=39, column=4, value=program_code)
+
+        return wb
+
+
+
     def _load_ppes_data(self, wb: openpyxl.Workbook, df_pp_categ: pd.DataFrame,
                        df_entrants: pd.DataFrame, df_sortants: pd.DataFrame,
                        program_code: str) -> openpyxl.Workbook:
@@ -141,8 +160,8 @@ class BPSSTool:
         
         sheet = wb[sheet_name]
         
-        # Écrire les données - CORRECTION: utiliser colonne 2 (B) au lieu de 3 (C)
-        start_rows = [7, 113, 218]  # Positions de départ
+        # Écrire les données 
+        start_rows = [7, 106, 205]  # Positions de départ
         dataframes = [df1, df2, df3]
         
         for start_row, df in zip(start_rows, dataframes):
@@ -151,10 +170,13 @@ class BPSSTool:
             
             for r_idx, row in enumerate(df_limited.values):
                 for c_idx, value in enumerate(row):
-                    # CORRECTION: column=2 pour commencer en B au lieu de C
-                    sheet.cell(row=start_row + r_idx, column=2 + c_idx, value=value)
-        
-        # Traitement spécial "Indicié" - CORRECTION v2
+                    sheet.cell(row=start_row + r_idx, column=3 + c_idx, value=value)
+                    if start_row == 7 : #Pour la première feuille
+                        sheet.cell(row = start_row + r_idx, column = 2, value = row[3][:4])
+                    else : #Pour les deux suivantes
+                        sheet.cell(row = start_row + r_idx, column = 2, value = row[2][:4])
+
+        # Traitement spécial "Indicié" 
         # La colonne "marqueur_masse_indiciaire" pourrait être à différents endroits
         # Essayons plusieurs colonnes possibles
         df_indicie = None
@@ -173,9 +195,9 @@ class BPSSTool:
                 wb.create_sheet('Accueil')
             
             accueil_sheet = wb['Accueil']
-            
+
             # Nettoyer d'abord les anciennes données
-            for row in range(43, 55):  # B43:C54
+            for row in range(43, 54):  # B43:C54
                 accueil_sheet.cell(row=row, column=2, value=None)  # Colonne B
                 accueil_sheet.cell(row=row, column=3, value=None)  # Colonne C
             
@@ -185,42 +207,13 @@ class BPSSTool:
                 if row_dest > 54:  # Ne pas dépasser la ligne 54
                     break
                 
-                # NOUVELLE LOGIQUE : 
-                # - Chercher la colonne qui contient le code ET le nom (format "1320 : Enseignants-chercheurs")
-                # - Si on trouve ce format, extraire le code et le nom
-                # - Sinon, utiliser les colonnes comme avant
-                
-                code_categorie = None
-                nom_categorie = None
-                
-                # Parcourir les colonnes pour trouver le pattern "code : nom"
-                for val in row_data:
-                    if isinstance(val, str) and ' : ' in val and val[0].isdigit():
-                        # C'est probablement la colonne avec "1320 : Enseignants-chercheurs"
-                        parts = val.split(' : ', 1)
-                        if len(parts) == 2:
-                            code_categorie = parts[0].strip()
-                            nom_categorie = parts[1].strip()
-                            break
-                
-                # Si on n'a pas trouvé le pattern, essayer l'ancienne méthode
-                if code_categorie is None and len(row_data) > 4:
-                    # Chercher un code numérique dans les premières colonnes
-                    for i in range(min(3, len(row_data))):
-                        val = str(row_data[i])
-                        if val.isdigit() and len(val) == 4:  # Code à 4 chiffres
-                            code_categorie = val
-                            # Le nom est probablement dans une colonne suivante
-                            for j in range(i+1, len(row_data)):
-                                if isinstance(row_data[j], str) and len(row_data[j]) > 10:
-                                    nom_categorie = row_data[j]
-                                    break
-                            break
+                code_categorie = row_data[3][:4]
+                nom_categorie = row_data[3]
                 
                 # Écrire dans Accueil si on a trouvé les données
                 if code_categorie and nom_categorie:
-                    accueil_sheet.cell(row=row_dest, column=2, value=code_categorie)  # B43, B44...
-                    accueil_sheet.cell(row=row_dest, column=3, value=nom_categorie)   # C43, C44...
+                    accueil_sheet.cell(row=row_dest, column=2, value=code_categorie) 
+                    accueil_sheet.cell(row=row_dest, column=3, value=nom_categorie)   
                     row_dest += 1
                 else:
                     logger.warning(f"Impossible d'extraire code/nom de la ligne: {row_data[:5]}")
@@ -237,11 +230,11 @@ class BPSSTool:
         
         sheet = wb[sheet_name]
         
-        # Header (5 premières lignes) - écrire à partir de colonne B
+        # Header (5 premières lignes) - écrire à partir de colonne A
         header = df_dpp18.head(5)
         for r_idx, row in enumerate(header.values):
             for c_idx, value in enumerate(row):
-                sheet.cell(row=1 + r_idx, column=2 + c_idx, value=value)
+                sheet.cell(row= 2 + r_idx, column=1+ c_idx, value=value)
         
         # Filtrage par programme sur la colonne A (index 0)
         code_prefix = program_code[:3]
@@ -252,8 +245,9 @@ class BPSSTool:
         # Écrire les données filtrées à partir de la ligne 6
         for r_idx, row in enumerate(df_filtered.values):
             for c_idx, value in enumerate(row):
-                sheet.cell(row=6 + r_idx, column=2 + c_idx, value=value)
-        
+                sheet.cell(row=7 + r_idx, column=1 + c_idx, value=value)
+            sheet.cell(row = 6 + r_idx, column = 1, value = row[1][:14])
+
         logger.info("Données DPP18 chargées")
         return wb
     
@@ -270,7 +264,7 @@ class BPSSTool:
         header = df_bud45.head(5)
         for r_idx, row in enumerate(header.values):
             for c_idx, value in enumerate(row):
-                sheet.cell(row=1 + r_idx, column=2 + c_idx, value=value)
+                sheet.cell(row= 2 + r_idx, column= 1+ c_idx, value=value)
         
         # Filtrage par programme sur la colonne B (index 1)
         code_prefix = program_code[:3]
@@ -282,7 +276,8 @@ class BPSSTool:
             # Écrire les données filtrées à partir de la ligne 6
             for r_idx, row in enumerate(df_filtered.values):
                 for c_idx, value in enumerate(row):
-                    sheet.cell(row=6 + r_idx, column=2 + c_idx, value=value)
-        
+                    sheet.cell(row=7 + r_idx, column=1 + c_idx, value=value)
+                sheet.cell(row = 7 + r_idx, column = 1, value = row[3][:14])
+
         logger.info("Données BUD45 chargées")
         return wb

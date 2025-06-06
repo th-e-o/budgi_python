@@ -24,7 +24,7 @@ class ExcelHandler:
             wb = openpyxl.load_workbook(
                 file_path, 
                 data_only=False, 
-                keep_vba=True,
+                keep_vba=False,
                 keep_links=False  # Disable external links
             )
             self.current_workbook = wb
@@ -49,7 +49,7 @@ class ExcelHandler:
             wb = openpyxl.load_workbook(
                 temp_path,
                 data_only=False,
-                keep_vba=True,
+                keep_vba=False,
                 keep_links=False
             )
             self.current_workbook = wb
