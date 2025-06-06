@@ -13,6 +13,8 @@ from modules.excel_parser.parser_v3 import ExcelFormulaParser, ParserConfig, For
 from modules.budget_mapper import BudgetMapper
 from typing import List
 
+from modules.excel_parser.parser_v4 import SimpleExcelFormulaParser
+
 # Configuration de la page
 st.set_page_config(
     page_title="BudgiBot - Assistant Budgétaire",
@@ -152,7 +154,8 @@ def init_session_state():
     defaults = {
         'chat_history': [],
         'current_file': None,
-        'excel_workbook': None,
+        'excel_workbook': None,  # Contains the workbook with un-computed formulas ()
+        'displayed_excel_workbook': None,  # Workbook to display in the UI (computed formulas when selected)
         'extracted_data': None,
         'is_typing': False,
         'pending_action': None,
@@ -356,7 +359,8 @@ def handle_tool_action(action: dict):
         asyncio.run(process_bpss(action.get('data')))
         
     elif action_type == 'parse_excel':
-        parse_excel_formulas()
+        pass
+        # parse_excel_formulas()
         
     elif action_type == 'map_budget_cells':
         asyncio.run(map_budget_to_cells())
@@ -542,6 +546,24 @@ def parse_excel_formulas():
         except Exception as e:
             logger.error(f"Erreur parsing: {str(e)}")
             st.error(f"❌ Erreur: {str(e)}")
+
+def apply_excel_formulas2():
+    with st.spinner("Application des formules en cours.."):
+        parser = SimpleExcelFormulaParser()
+        workbook_with_values = parser.parse_and_apply(st.session_state.excel_workbook)
+        col1, col2 = st.columns(2)
+        with col1:
+            st.metric("✅ Succès", 0)
+        with col2:
+            st.metric("❌ Erreurs", 0)
+
+        st.session_state.chat_history.append({
+            'role': 'assistant',
+            'content': f"✅ J'ai appliqué les formules dans votre fichier Excel.\n"
+                       f"Basculez en mode 'Valeurs' pour voir les résultats calculés :3",
+            'timestamp': datetime.now().strftime("%H:%M")
+        })
+
 
 def apply_excel_formulas():
     """Applique les formules parsées au workbook avec debug amélioré"""

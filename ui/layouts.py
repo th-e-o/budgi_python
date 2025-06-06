@@ -329,9 +329,6 @@ class MainLayout:
                         
                         df = new_df
                     
-                    # Simple info avec debug info
-                    debug_info = f"ID: {editor_key}" if st.session_state.get('debug_mode', False) else ""
-                    
                     # Vérifier si des formules sont présentes dans les données affichées
                     has_formulas = False
                     if display_mode == "Valeurs":
@@ -439,7 +436,7 @@ class MainLayout:
                                 # Bouton pour télécharger le script Python généré
                                 if formulas.get('script_file'):
                                     try: 
-                                        with open(formulas['script_file'], 'r') as f:
+                                        with open(formulas['script_file'], 'r', encoding='utf-8') as f:
                                             script_content = f.read()
                                         st.download_button(
                                             "📥 Télécharger le script Python",
