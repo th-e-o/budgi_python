@@ -566,146 +566,33 @@ def apply_excel_formulas2():
 
 
 def apply_excel_formulas():
-    """Applique les formules parsées au workbook avec debug amélioré"""
-    if not st.session_state.get('parsed_formulas'):
-        st.error("❌ Aucune formule parsée. Lancez d'abord le parsing.")
-        return
-    
+    """Applique les formules parsées au workbook avec le nouveau parser"""
     if not st.session_state.get('excel_workbook'):
         st.error("❌ Aucun fichier Excel chargé")
         return
-    
+
     with st.spinner("Application des formules en cours..."):
         try:
-            # Récupérer les formules parsées
-            parsed_data = st.session_state.parsed_formulas
-            formulas = parsed_data.get('formulas', [])
-            
-            if not formulas:
-                st.warning("⚠️ Aucune formule à appliquer")
-                return
-            
-            # Créer une instance du parseur
-            parser_config = ParserConfig(
-                chunk_size=800,
-                workers=4,
-                progress_enabled=True
-            )
-            parser = ExcelFormulaParser(parser_config)
-            
-            # Afficher les informations de debug si activé
-            if st.session_state.get('debug_mode', False):
-                st.info(f"🔍 Mode debug: Application de {len(formulas)} formules")
-                
-                # Afficher un échantillon du code généré
-                sample_formulas = [f for f in formulas[:5] if f.python_code and not f.error]
-                if sample_formulas:
-                    with st.expander("Exemples de code Python généré"):
-                        for f in sample_formulas:
-                            st.code(f"{f.sheet}!{f.address}: {f.python_code}", language="python")
-            
-            # Appliquer les formules au workbook
-            updated_wb = parser.apply_formulas_to_workbook(
-                st.session_state.excel_workbook,
-                formulas
-            )
-            
-            # Mettre à jour le workbook en session
-            st.session_state.excel_workbook = updated_wb
-            
-            # Sauvegarder temporairement pour l'affichage des valeurs
-            import tempfile
-            with tempfile.NamedTemporaryFile(suffix='.xlsx', delete=False) as tmp:
-                updated_wb.save(tmp.name)
-                services['excel_handler'].current_path = tmp.name
-                st.session_state.temp_files.append(tmp.name)
-            
-            # Analyser les résultats
-            success_count = sum(1 for f in formulas if f.value is not None and not f.error)
-            error_count = sum(1 for f in formulas if f.error)
-            
-            # Afficher les résultats détaillés
-            col1, col2 = st.columns(2)
-            with col1:
-                st.metric("✅ Succès", success_count)
-            with col2:
-                st.metric("❌ Erreurs", error_count)
-            
-            # Message de succès
-            if success_count > 0:
-                st.success(f"✅ {success_count} formules appliquées avec succès!")
-                
-                # Ajouter un message dans le chat
-                st.session_state.chat_history.append({
-                    'role': 'assistant',
-                    'content': f"✅ J'ai appliqué **{success_count} formules** dans votre fichier Excel.\n\n"
-                             f"• **{success_count}** calculs réussis\n"
-                             f"• **{error_count}** erreurs\n\n"
-                             f"Basculez en mode 'Valeurs' pour voir les résultats calculés.",
-                    'timestamp': datetime.now().strftime("%H:%M")
-                })
-            
-            # Gestion détaillée des erreurs
-            if error_count > 0:
-                st.warning(f"⚠️ {error_count} formules n'ont pas pu être calculées")
-                
-                # Grouper les erreurs par type
-                error_types = {}
-                if st.session_state.get('formula_errors'):
-                    for err in st.session_state.formula_errors:
-                        error_msg = err['error']
-                        # Extraire le type d'erreur
-                        if "can only concatenate str" in error_msg:
-                            error_type = "Erreur de type (string/nombre)"
-                        elif "unsupported operand type" in error_msg:
-                            error_type = "Opération impossible (types incompatibles)"
-                        elif "NoneType" in error_msg:
-                            error_type = "Valeur manquante (None)"
-                        else:
-                            error_type = "Autre erreur"
-                        
-                        if error_type not in error_types:
-                            error_types[error_type] = []
-                        error_types[error_type].append(err)
-                
-                # Afficher les erreurs groupées
-                st.markdown("### 📋 Détails des erreurs")
-                for error_type, errors in error_types.items():
-                    st.markdown(f"**{error_type}** ({len(errors)} erreurs)")
-                    
-                    # Afficher quelques exemples
-                    for err in errors[:3]:
-                        st.error(f"**{err['cell']}**: {err['formula']}")
-                        st.caption(f"Erreur: {err['error'][:100]}...")
-                        if st.session_state.get('debug_mode'):
-                            st.code(f"Code généré: {err.get('python_code', 'N/A')}", language="python")
-                    
-                    if len(errors) > 3:
-                        st.caption(f"... et {len(errors) - 3} autres erreurs de ce type")
-                
-                
-                # Suggestions de correction
-                st.info("""
-                💡 **Suggestions pour corriger les erreurs** :
-                
-                1. **Erreurs de type** : Vérifiez que les cellules contiennent bien des nombres
-                2. **Valeurs manquantes** : Remplacez les cellules vides par 0
-                3. **Formules complexes** : Simplifiez les formules ou décomposez-les
-                
-                Vous pouvez éditer les données dans l'onglet "Données" puis relancer le calcul.
-                """)
-            
-            # Forcer le rafraîchissement
+            parser = SimpleExcelFormulaParser()
+            calculated_wb = parser.parse_and_apply(st.session_state.excel_workbook)
+
+            st.session_state.displayed_excel_workbook = calculated_wb
+
+            st.success("✅ Formules calculées avec succès!")
+
+            st.session_state.chat_history.append({
+                'role': 'assistant',
+                'content': "✅ J'ai calculé les formules dans votre fichier Excel.\n"
+                           "Basculez en mode 'Valeurs' pour voir les résultats calculés.",
+                'timestamp': datetime.now().strftime("%H:%M")
+            })
+
             st.rerun()
-            
+
         except Exception as e:
-            logger.error(f"Erreur application formules: {str(e)}")
-            st.error(f"❌ Erreur lors de l'application: {str(e)}")
-            
-            # En mode debug, afficher la trace complète
-            if st.session_state.get('debug_mode'):
-                import traceback
-                st.code(traceback.format_exc(), language="python")
+            logger.error(f"Erreur calcul formules: {str(e)}")
+            st.error(f"❌ Erreur lors du calcul: {str(e)}")
+
 
 async def map_budget_to_cells():
     """Mappe les données aux cellules Excel avec gestion du rapport"""

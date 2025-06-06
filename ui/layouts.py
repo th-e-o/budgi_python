@@ -253,7 +253,7 @@ class MainLayout:
             if st.session_state.selected_sheet not in sheets:
                 st.session_state.selected_sheet = sheets[0] if sheets else None
             
-            col1, col2, col3, col4, col5 = st.columns([3, 1, 1, 1, 1])
+            col1, col2, col3, col4 = st.columns([3, 1, 1, 1, 1])
             with col1:
                 # Sélecteur de feuille sans callback complexe
                 selected_sheet = st.selectbox(
@@ -280,10 +280,6 @@ class MainLayout:
                 )
 
             with col3:
-                if st.button("📊 Parser", help="Analyser les formules"):
-                    on_tool_action({'action': 'parse_excel'})
-
-            with col4:
                 # Bouton Appliquer si formules parsées
                 if st.session_state.get('parsed_formulas'):
                     if st.button("⚡ Appliquer", help="Appliquer les formules"):
@@ -294,7 +290,7 @@ class MainLayout:
                         errors = st.session_state.formula_errors
                         st.caption(f"⚠️ {len(errors)} erreurs")
 
-            with col5:
+            with col4:
                 st.download_button(
                     "💾",
                     data=self.services['excel_handler'].save_workbook_to_bytes(wb),
@@ -305,11 +301,21 @@ class MainLayout:
             # Display data
             if selected_sheet:
                 try:
+                    # If display_mode is "Valeurs" and a calculated workbook exists, use it.
+                    # Otherwise, use the original workbook.
+                    if display_mode == "Valeurs" and st.session_state.get('displayed_excel_workbook'):
+                        display_wb = st.session_state.displayed_excel_workbook
+                    else:
+                        display_wb = wb
+
+                    if selected_sheet not in display_wb.sheetnames:
+                        st.warning("Cette feuille n'existe pas dans le workbook calculé")
+                        display_wb = wb  # Fallback to original
+
                     # Charger les données de la feuille
                     df = self.services['excel_handler'].sheet_to_dataframe(
-                        wb, 
-                        selected_sheet,
-                        show_formulas=(display_mode == "Formules")
+                        display_wb,
+                        selected_sheet
                     )
                     
                     # Assurer que le DataFrame a une taille minimale pour l'édition
@@ -328,20 +334,6 @@ class MainLayout:
                                     new_df.iloc[i, j] = df.iloc[i, j] if i < len(df) and j < len(df.columns) else None
                         
                         df = new_df
-                    
-                    # Vérifier si des formules sont présentes dans les données affichées
-                    has_formulas = False
-                    if display_mode == "Valeurs":
-                        for col in df.columns:
-                            if df[col].astype(str).str.startswith('[=', na=False).any():
-                                has_formulas = True
-                                break
-                    
-                    caption_text = f"📊 {selected_sheet} - {len(df)} lignes × {len(df.columns)} colonnes {debug_info}"
-                    if has_formulas and display_mode == "Valeurs":
-                        caption_text += " ⚠️ Formules détectées (valeurs non calculées)"
-                    
-                    st.caption(caption_text)
                     
                     # Créer une clé unique pour chaque combinaison feuille + mode
                     editor_key = f"excel_editor_{selected_sheet}_{display_mode}"

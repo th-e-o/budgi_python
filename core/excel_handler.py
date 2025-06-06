@@ -113,60 +113,23 @@ class ExcelHandler:
             logger.error(f"Erreur sauvegarde sans images: {str(e)}")
             raise
     
-    def sheet_to_dataframe(self, workbook: openpyxl.Workbook, sheet_name: str, 
-                       show_formulas: bool = False) -> pd.DataFrame:
-        """Convertit une feuille en DataFrame"""
+    def sheet_to_dataframe(self, workbook: openpyxl.Workbook, sheet_name: str) -> pd.DataFrame:
+        """
+        Converts a sheet to a pandas DataFrame.
+        If the provided workbook is excel_workbook, it will have the formulas.
+        If the provided workbook is displayed_excel_workbook, it will have the values (provided it has been computed)
+        """
         if sheet_name not in workbook.sheetnames:
             raise ValueError(f"Feuille '{sheet_name}' non trouvée")
         
         sheet = workbook[sheet_name]
         data = []
-        
-        # Si on veut les valeurs et qu'on a un chemin de fichier, recharger en mode data_only
-        if not show_formulas and self.current_path and os.path.exists(self.current_path):
-            try:
-                # Charger une copie du workbook en mode data_only pour obtenir les valeurs
-                wb_values = openpyxl.load_workbook(self.current_path, data_only=True)
-                sheet_values = wb_values[sheet_name]
-                
-                # Lire les valeurs calculées
-                for row in sheet_values.iter_rows():
-                    row_data = []
-                    for cell in row:
-                        row_data.append(cell.value)
-                    data.append(row_data)
-                
-                wb_values.close()
-                
-            except Exception as e:
-                logger.warning(f"Impossible de charger les valeurs calculées: {str(e)}")
-                # Fallback: utiliser les valeurs du workbook actuel
-                for row in sheet.iter_rows():
-                    row_data = []
-                    for cell in row:
-                        # En mode valeurs, essayer d'obtenir la valeur interne si possible
-                        if hasattr(cell, '_value') and cell._value is not None:
-                            row_data.append(cell._value)
-                        else:
-                            row_data.append(cell.value)
-                    data.append(row_data)
-        else:
-            # Mode formules ou pas de fichier : afficher formules/valeurs telles quelles
-            for row in sheet.iter_rows():
-                row_data = []
-                for cell in row:
-                    if show_formulas:
-                        # Mode formules : toujours afficher la valeur brute (formule si présente)
-                        row_data.append(cell.value)
-                    else:
-                        # Mode valeurs sans fichier : essayer d'obtenir la valeur calculée
-                        if hasattr(cell, 'value') and isinstance(cell.value, str) and cell.value.startswith('='):
-                            # C'est une formule, mais on ne peut pas obtenir la valeur calculée
-                            # Afficher [Formula] ou la formule elle-même
-                            row_data.append(f"[{cell.value}]")
-                        else:
-                            row_data.append(cell.value)
-                data.append(row_data)
+
+        for row in sheet.iter_rows():
+            row_data = []
+            for cell in row:
+                row_data.append(cell.value)
+            data.append(row_data)
         
         if data:
             # Créer le DataFrame avec les données existantes
