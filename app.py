@@ -9,6 +9,8 @@ import tempfile
 import contextlib
 import os
 import pandas as pd
+
+from core.updated_excel_handler import UpdatedExcelHandler
 from modules.excel_parser.parser_v3 import ExcelFormulaParser, ParserConfig, FormulaCell
 from modules.budget_mapper import BudgetMapper
 from typing import List
@@ -128,7 +130,7 @@ def init_services():
         'llm_client': MistralClient(),
         'file_handler': FileHandler(),
         'chat_handler': ChatHandler(),
-        'excel_handler': ExcelHandler(),
+        'excel_handler': UpdatedExcelHandler(),
         'budget_extractor': BudgetExtractor(),
         'bpss_tool': BPSSTool(),
         'json_helper': JSONHelper(),
@@ -154,8 +156,6 @@ def init_session_state():
     defaults = {
         'chat_history': [],
         'current_file': None,
-        'excel_workbook': None,  # Contains the workbook with un-computed formulas ()
-        'displayed_excel_workbook': None,  # Workbook to display in the UI (computed formulas when selected)
         'extracted_data': None,
         'is_typing': False,
         'pending_action': None,
@@ -297,11 +297,9 @@ async def process_file(uploaded_file):
             
             # Traitement spécifique
             if uploaded_file.name.endswith('.xlsx'):
-                st.session_state.excel_workbook = services['excel_handler'].load_workbook_from_bytes(
-                    file_content
-                )
-                st.session_state.layout_mode = 'split'  # Vue partagée pour Excel
-                
+                wb = services['excel_handler'].load_workbook_from_bytes(file_content)
+                st.session_state.layout_mode = 'split'
+
                 response = f"✅ J'ai chargé votre fichier Excel '{uploaded_file.name}'. Il contient {len(st.session_state.excel_workbook.sheetnames)} feuilles. Vous pouvez maintenant :\n\n• Visualiser et éditer les données dans l'onglet Excel\n• Extraire les données budgétaires\n• Utiliser l'outil BPSS pour les mesures catégorielles"
                 
             elif uploaded_file.name.endswith('.json'):
@@ -366,7 +364,7 @@ def handle_tool_action(action: dict):
         asyncio.run(map_budget_to_cells())
         
     elif action_type == 'apply_formulas':
-        apply_excel_formulas()
+        apply_excel_formulas2()
 
 async def extract_budget_data():
     """Extrait les données budgétaires"""
@@ -412,10 +410,6 @@ async def process_bpss(data: dict):
     try:
         progress = st.progress(0, text="Traitement BPSS...")
         
-        # Créer des fichiers temporaires SANS les supprimer automatiquement
-        import tempfile
-        import os
-        
         temp_files = []
         temp_paths = {}
         
@@ -434,7 +428,9 @@ async def process_bpss(data: dict):
                 logger.info(f"Fichier temporaire créé: {key} -> {temp_path}")
             
             progress.progress(50, text="Application des données...")
-            
+
+            target_wb = services['excel_handler'].formula_workbook or openpyxl.Workbook()
+
             # Traiter avec les fichiers temporaires
             result_wb = services['bpss_tool'].process_files(
                 ppes_path=temp_paths['ppes'],
@@ -445,8 +441,8 @@ async def process_bpss(data: dict):
                 program_code=data['program'],
                 target_workbook=st.session_state.excel_workbook or openpyxl.Workbook()
             )
-            
-            st.session_state.excel_workbook = result_wb
+
+            services['excel_handler'].replace_formula_workbook(result_wb)
             progress.progress(100, text="Terminé!")
             
             # Message de succès
@@ -548,21 +544,30 @@ def parse_excel_formulas():
             st.error(f"❌ Erreur: {str(e)}")
 
 def apply_excel_formulas2():
-    with st.spinner("Application des formules en cours.."):
-        parser = SimpleExcelFormulaParser()
-        workbook_with_values = parser.parse_and_apply(st.session_state.excel_workbook)
-        col1, col2 = st.columns(2)
-        with col1:
-            st.metric("✅ Succès", 0)
-        with col2:
-            st.metric("❌ Erreurs", 0)
+    """Applique les formules parsées au workbook display_workbook"""
+    if not services['excel_handler'].has_workbook():
+        st.error("❌ Aucun fichier Excel chargé")
+        return
 
-        st.session_state.chat_history.append({
-            'role': 'assistant',
-            'content': f"✅ J'ai appliqué les formules dans votre fichier Excel.\n"
-                       f"Basculez en mode 'Valeurs' pour voir les résultats calculés :3",
-            'timestamp': datetime.now().strftime("%H:%M")
-        })
+    with st.spinner("Application des formules en cours..."):
+        try:
+            # Use the new handler method
+            services['excel_handler'].compute_display_workbook()
+
+            st.success("✅ Formules calculées avec succès!")
+
+            st.session_state.chat_history.append({
+                'role': 'assistant',
+                'content': "✅ J'ai calculé les formules dans votre fichier Excel.\n"
+                           "Basculez en mode 'Valeurs' pour voir les résultats calculés.",
+                'timestamp': datetime.now().strftime("%H:%M")
+            })
+
+            st.rerun()
+
+        except Exception as e:
+            logger.error(f"Erreur calcul formules: {str(e)}")
+            st.error(f"❌ Erreur lors du calcul: {str(e)}")
 
 
 def apply_excel_formulas():
@@ -596,10 +601,16 @@ def apply_excel_formulas():
 
 async def map_budget_to_cells():
     """Mappe les données aux cellules Excel avec gestion du rapport"""
+    # Ensure that extracted data and JSON data are available
     if not st.session_state.get('extracted_data') or not st.session_state.get('json_data'):
         st.error("❌ Données manquantes pour le mapping")
         return
-    
+
+    # Ensure a workbook is loaded in the handler
+    if not services['excel_handler'].has_workbook():
+        st.error("❌ Aucun fichier Excel n'est chargé pour le mapping.")
+        return
+
     with st.spinner("Mapping en cours..."):
         try:
             mapper = services['budget_mapper']
@@ -624,7 +635,7 @@ async def map_budget_to_cells():
             progress_bar.empty()
             progress_text.empty()
             
-            if mapping and st.session_state.excel_workbook:
+            if mapping:
                 # Enrichir les entrées avec le mapping
                 entries_df = pd.DataFrame(st.session_state.extracted_data)
                 enriched_df = mapper.enrich_entries_with_mapping(entries_df, mapping)
@@ -638,10 +649,13 @@ async def map_budget_to_cells():
                 
                 # Appliquer au workbook
                 success, errors = mapper.apply_mapping_to_excel(
-                    st.session_state.excel_workbook,
+                    services['excel_handler'].formula_workbook,
                     mapping,
                     entries_df
                 )
+
+                # After modification, invalidate the display workbook
+                services['excel_handler'].invalidate()
                 
                 # Afficher les résultats SANS colonnes imbriquées
                 if success > 0:

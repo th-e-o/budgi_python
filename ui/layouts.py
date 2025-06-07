@@ -219,7 +219,9 @@ class MainLayout:
                 on_file_upload(uploaded_file)
     
     def _render_excel_data_tab(self, on_tool_action: Callable):
-        if not st.session_state.get('excel_workbook'):
+        excel_handler = self.services['excel_handler']
+
+        if not excel_handler.has_workbook():
             # Clean upload area
             uploaded = st.file_uploader(
                 "📂 Charger un fichier Excel",
@@ -230,20 +232,19 @@ class MainLayout:
             
             if uploaded:
                 try:
-                    wb = self.services['excel_handler'].load_workbook_from_bytes(uploaded.getbuffer())
-                    st.session_state.excel_workbook = wb
+                    excel_handler.load_workbook_from_bytes(uploaded.getbuffer())
                     st.session_state.current_file = {
                         'name': uploaded.name,
                         'content': uploaded.getbuffer(),
                         'raw_bytes': uploaded.getbuffer()
                     }
                     st.rerun()
+
                 except Exception as e:
                     st.error(f"Erreur: {str(e)}")
         else:
-            # Sheet management
-            wb = st.session_state.excel_workbook
-            sheets = wb.sheetnames
+            formula_wb = excel_handler.formula_workbook
+            sheets = formula_wb.sheetnames
             
             # Initialiser la feuille sélectionnée si nécessaire
             if 'selected_sheet' not in st.session_state:
@@ -253,7 +254,8 @@ class MainLayout:
             if st.session_state.selected_sheet not in sheets:
                 st.session_state.selected_sheet = sheets[0] if sheets else None
             
-            col1, col2, col3, col4 = st.columns([3, 1, 1, 1, 1])
+            col1, col2, col3, col4 = st.columns([3, 1, 1, 1])
+
             with col1:
                 # Sélecteur de feuille sans callback complexe
                 selected_sheet = st.selectbox(
@@ -272,28 +274,25 @@ class MainLayout:
                     st.rerun()
 
             with col2:
-                # Toggle valeurs/formules
                 display_mode = st.selectbox(
                     "Afficher",
                     ["Valeurs", "Formules"],
-                    key="display_mode_toggle"
+                    key="display_mode_toggle",
+                    help="Basculez entre les valeurs calculées et les formules originales."
                 )
 
             with col3:
-                # Bouton Appliquer si formules parsées
-                if st.session_state.get('parsed_formulas'):
-                    if st.button("⚡ Appliquer", help="Appliquer les formules"):
+                # Show button to calculate/re-calculate formulas
+                if excel_handler.is_display_stale():
+                    if st.button("🔄 Calculer les formules", type="primary"):
                         on_tool_action({'action': 'apply_formulas'})
-                    
-                    # Afficher les erreurs si elles existent
-                    if st.session_state.get('formula_errors'):
-                        errors = st.session_state.formula_errors
-                        st.caption(f"⚠️ {len(errors)} erreurs")
+                else:
+                    st.button("✅ À jour", disabled=True, help="Les valeurs calculées sont à jour.")
 
             with col4:
                 st.download_button(
                     "💾",
-                    data=self.services['excel_handler'].save_workbook_to_bytes(wb),
+                    data=excel_handler.save_workbook_to_bytes(formula_wb),
                     file_name=f"export_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx",
                     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
                 )
@@ -301,16 +300,20 @@ class MainLayout:
             # Display data
             if selected_sheet:
                 try:
-                    # If display_mode is "Valeurs" and a calculated workbook exists, use it.
-                    # Otherwise, use the original workbook.
-                    if display_mode == "Valeurs" and st.session_state.get('displayed_excel_workbook'):
-                        display_wb = st.session_state.displayed_excel_workbook
+                    if display_mode == "Valeurs":
+                        display_wb = excel_handler.display_workbook
+
+                        if display_wb is None:
+                            st.info(
+                                "Les valeurs ne sont pas encore calculées. Affichez les formules ou cliquez sur 'Calculer'.")
+                            display_wb = formula_wb  # Fallback to formula view
                     else:
-                        display_wb = wb
+                        display_wb = formula_wb
 
                     if selected_sheet not in display_wb.sheetnames:
-                        st.warning("Cette feuille n'existe pas dans le workbook calculé")
-                        display_wb = wb  # Fallback to original
+                        st.warning(
+                            "Cette feuille n'existe pas dans le classeur affiché. Retour à la version originale.")
+                        display_wb = formula_wb
 
                     # Charger les données de la feuille
                     df = self.services['excel_handler'].sheet_to_dataframe(
@@ -364,25 +367,13 @@ class MainLayout:
                     # Bouton de sauvegarde toujours visible pour éviter les problèmes de détection
                     col1, col2, col3 = st.columns([1, 2, 1])
                     with col2:
-                        if st.button("💾 Sauvegarder les modifications", 
-                                type="primary", 
-                                use_container_width=True,
-                                key=f"save_btn_{selected_sheet}"):
+                        if st.button("💾 Sauvegarder les modifications", ...):
                             try:
-                                # Sauvegarder les modifications
-                                self.services['excel_handler'].dataframe_to_sheet(
-                                    edited_df, wb, selected_sheet
-                                )
-                                
-                                # Mettre à jour le workbook en session
-                                st.session_state.excel_workbook = wb
-                                
+                                # Use the new handler method to update the sheet
+                                excel_handler.update_sheet_from_dataframe(edited_df, selected_sheet)
                                 st.success(f"✅ Modifications sauvegardées dans {selected_sheet}!")
-                                
-                                # Forcer le rechargement pour afficher les nouvelles valeurs
                                 time.sleep(0.5)
                                 st.rerun()
-                                
                             except Exception as e:
                                 st.error(f"❌ Erreur lors de la sauvegarde: {str(e)}")
                                 logger.error(f"Erreur sauvegarde: {str(e)}", exc_info=True)
