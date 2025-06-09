@@ -212,38 +212,6 @@ class JSONHelper:
         
         return json_data, removed_count
     
-    def get_duplicate_tags_info(self, json_data: Dict[str, Any]) -> List[Dict[str, Any]]:
-        """
-        Retourne des informations sur les tags dupliqués sans les supprimer
-        Utile pour l'analyse avant le nettoyage
-        """
-        if 'tags' not in json_data:
-            return []
-        
-        tags_by_labels = {}
-        duplicates_info = []
-        
-        for tag in json_data['tags']:
-            labels = tag.get('labels', [])
-            if isinstance(labels, list):
-                labels_key = tuple(sorted(str(l) for l in labels))
-            else:
-                labels_key = (str(labels),)
-            
-            if labels_key in tags_by_labels:
-                # On a trouvé un doublon
-                original = tags_by_labels[labels_key]
-                duplicates_info.append({
-                    'labels': list(labels_key),
-                    'original_cell': f"{original.get('sheet_name')}!{original.get('cell_address')}",
-                    'duplicate_cell': f"{tag.get('sheet_name')}!{tag.get('cell_address')}",
-                    'tag_ids': [original.get('id'), tag.get('id')]
-                })
-            else:
-                tags_by_labels[labels_key] = tag
-        
-        return duplicates_info
-
     def update_tags_from_dataframe(self, json_data: Dict[str, Any], 
                                   df: pd.DataFrame,
                                   sheet_name: str) -> Tuple[Dict[str, Any], List[Dict[str, Any]]]:

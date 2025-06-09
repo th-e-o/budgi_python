@@ -164,6 +164,8 @@ def init_session_state():
         'layout_mode': 'chat',
         'mapping_report': None,  
         'excel_tab': 'data',  # Ajouter pour gérer l'onglet actif
+        'pending_mapping': None,       # Mapping en attente de validation
+        'mapping_validated': False,    # Flag indiquant si le mapping a été appliqué
     }
     
     # Initialiser les valeurs par défaut
@@ -224,11 +226,6 @@ async def process_message():
                 'timestamp': datetime.now().strftime("%H:%M")
             })
             
-            # Détecter si BPSS est mentionné
-            last_message = st.session_state.chat_history[-2]['content'].lower()
-            if any(keyword in last_message for keyword in ['bpss', 'mesures catégorielles']):
-                st.session_state.excel_tab = 'tools'
-                st.session_state.layout_mode = 'split'
                 
     except Exception as e:
         logger.error(f"Erreur traitement message: {str(e)}")
@@ -308,7 +305,7 @@ async def process_file(uploaded_file):
                 
             else:
                 # Résumé pour autres types
-                preview = content[:500] + "..." if len(content) > 500 else content
+                preview = content[:200] + "..." if len(content) > 200 else content
                 response = f"✅ J'ai bien reçu votre fichier '{uploaded_file.name}'. Voici un aperçu :\n\n{preview}\n\nQue souhaitez-vous faire avec ce fichier ?"
             
             # Ajouter la réponse
@@ -363,6 +360,9 @@ def handle_tool_action(action: dict):
         
     elif action_type == 'apply_formulas':
         apply_excel_formulas()
+    
+    elif action_type == 'apply_validated_mapping':
+        asyncio.run(apply_validated_mapping())
 
 async def extract_budget_data():
     """Extrait les données budgétaires"""
@@ -722,6 +722,8 @@ async def map_budget_to_cells():
                 
                 # Mettre à jour les données extraites enrichies
                 st.session_state.extracted_data = enriched_df.to_dict('records')
+                st.session_state.pending_mapping = mapping  # stocker le mapping en attente
+                st.session_state.mapping_validated = False  # flag de validation
                 
                 # Générer le rapport de mapping
                 report = mapper.generate_mapping_report(mapping, entries_df)
@@ -734,7 +736,7 @@ async def map_budget_to_cells():
                     entries_df
                 )
                 
-                # Afficher les résultats SANS colonnes imbriquées
+                # Afficher les résultats
                 if success > 0:
                     # Message de succès simple
                     st.success(f"""
@@ -772,6 +774,53 @@ async def map_budget_to_cells():
         except Exception as e:
             logger.error(f"Erreur mapping: {str(e)}")
             st.error(f"❌ Erreur lors du mapping: {str(e)}")
+
+#Fonction pour appliquer le mapping validé
+async def apply_validated_mapping():
+    """Applique le mapping validé dans Excel"""
+    if not st.session_state.get('pending_mapping') or not st.session_state.get('excel_workbook'):
+        st.error("❌ Aucun mapping validé à appliquer")
+        return
+    
+    with st.spinner("Application du mapping dans Excel..."):
+        try:
+            mapper = services['budget_mapper']
+            mapping = st.session_state.pending_mapping
+            entries_df = pd.DataFrame(st.session_state.extracted_data)
+            
+            # Appliquer au workbook
+            success_count, errors = mapper.apply_mapping_to_excel(
+                st.session_state.excel_workbook,
+                mapping,
+                entries_df
+            )
+            
+            if success_count > 0:
+                st.success(f"✅ {success_count} cellules mises à jour dans Excel!")
+                
+                # Marquer comme appliqué
+                st.session_state.mapping_validated = True
+                st.session_state.pending_mapping = None
+                
+                # Message dans le chat
+                st.session_state.chat_history.append({
+                    'role': 'assistant',
+                    'content': f"✅ Mapping appliqué avec succès!\n\n• **{success_count}** cellules mises à jour dans Excel\n• Les montants ont été écrits dans les cellules cibles\n\nVous pouvez maintenant télécharger le fichier Excel mis à jour.",
+                    'timestamp': datetime.now().strftime("%H:%M")
+                })
+                
+                st.rerun()
+            else:
+                st.error("❌ Aucune cellule n'a pu être mise à jour")
+                
+            if errors:
+                with st.expander("⚠️ Problèmes rencontrés"):
+                    for error in errors[:10]:
+                        st.warning(error)
+                        
+        except Exception as e:
+            logger.error(f"Erreur application mapping: {str(e)}")
+            st.error(f"❌ Erreur: {str(e)}")
 
 # Initialisation des services
 services = init_services()

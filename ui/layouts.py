@@ -148,7 +148,7 @@ class MainLayout:
                 self._render_excel_analysis_tab(on_tool_action)
             
             # Section 3: Outil BPSS
-            with st.expander("🛠️ **Outil BPSS**", expanded=False):
+            with st.expander("**Outil BPSS**", expanded=False):
                 st.caption("Traitez automatiquement vos fichiers PP-E-S, DPP18 et BUD45")
                 self._render_excel_tools_tab(on_tool_action)
         
@@ -537,11 +537,6 @@ class MainLayout:
                             use_container_width=True):
                         if st.session_state.get('excel_workbook'):
                             with st.spinner("Actualisation et nettoyage en cours..."):
-                                # D'abord, afficher les doublons existants
-                                duplicates_before = self.services['json_helper'].get_duplicate_tags_info(
-                                    st.session_state.json_data
-                                )
-                                
                                 # Mettre à jour et nettoyer
                                 updated_json, modifications = self.services['json_helper'].update_tags_from_excel(
                                     st.session_state.json_data,
@@ -562,46 +557,23 @@ class MainLayout:
                                         success_msg.append(f"🧹 {cleanup_info['removed_duplicates']} doublons supprimés")
                                     
                                     st.success(" | ".join(success_msg))
-                                    
-                                    # Stocker les détails dans session_state pour affichage après
-                                    st.session_state.show_modification_details = True
-                                    st.session_state.actual_modifications = actual_modifications
-                                    st.session_state.cleanup_info = cleanup_info
-                                    st.session_state.duplicates_before = duplicates_before
                                 else:
                                     st.info("ℹ️ Aucun nouveau label trouvé et aucun doublon à nettoyer")
                                     st.session_state.show_modification_details = False
                         else:
                             st.warning("⚠️ Chargez d'abord un fichier Excel")
 
-                # Colonne 2 avec les boutons supplémentaires
                 with col2:
-                    col2a, col2b = st.columns(2)
-                    
-                    with col2a:
-                        # Bouton pour analyser les doublons
-                        if st.button("🔍 Analyser doublons", use_container_width=True):
-                            duplicates = self.services['json_helper'].get_duplicate_tags_info(st.session_state.json_data)
-                            if duplicates:
-                                st.warning(f"⚠️ {len(duplicates)} groupes de doublons trouvés")
-                                # Stocker dans session_state pour affichage après
-                                st.session_state.show_duplicates_details = True
-                                st.session_state.current_duplicates = duplicates
-                            else:
-                                st.success("✅ Aucun doublon trouvé")
-                                st.session_state.show_duplicates_details = False
-
-                    with col2b:
-                        # Export JSON modifié
-                        if st.button("💾 Exporter JSON", use_container_width=True):
-                            json_str = self.services['json_helper'].export_json(st.session_state.json_data)
-                            st.download_button(
-                                "📥 Télécharger",
-                                data=json_str,
-                                file_name=f"config_updated_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json",
-                                mime="application/json",
-                                use_container_width=True
-                            )
+                    # Export JSON modifié
+                    if st.button("💾 Exporter JSON", use_container_width=True):
+                        json_str = self.services['json_helper'].export_json(st.session_state.json_data)
+                        st.download_button(
+                            "📥 Télécharger",
+                            data=json_str,
+                            file_name=f"config_updated_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json",
+                            mime="application/json",
+                            use_container_width=True
+                        )
                 
                 # Afficher les détails APRÈS les colonnes (pas d'expander car on est déjà dans un expander)
                 if st.session_state.get('show_modification_details', False):
@@ -627,26 +599,6 @@ class MainLayout:
                         st.markdown(f"• Tags avant nettoyage : {cleanup_info['remaining_tags'] + cleanup_info['removed_duplicates']}")
                         st.markdown(f"• Tags après nettoyage : {cleanup_info['remaining_tags']}")
                         st.markdown(f"• Doublons supprimés : {cleanup_info['removed_duplicates']}")
-                        
-                        if duplicates_before and st.checkbox("Voir les doublons supprimés", key="show_removed_duplicates"):
-                            for i, dup in enumerate(duplicates_before[:10]):
-                                st.text(f"Doublon {i+1}: {dup['original_cell']} = {dup['duplicate_cell']}")
-                                st.text(f"  Labels: {', '.join(dup['labels'][:3])}...")
-                            if len(duplicates_before) > 10:
-                                st.text(f"... et {len(duplicates_before) - 10} autres doublons")
-                
-                # Afficher les détails des doublons APRÈS les colonnes
-                if st.session_state.get('show_duplicates_details', False) and st.session_state.get('current_duplicates'):
-                    st.markdown("---")
-                    st.markdown("### 🔍 Doublons trouvés")
-                    duplicates = st.session_state.current_duplicates
-                    for i, dup in enumerate(duplicates[:10]):
-                        st.markdown(f"**Groupe {i+1}:**")
-                        st.text(f"• {dup['original_cell']}")
-                        st.text(f"• {dup['duplicate_cell']}")
-                        st.text(f"Labels: {', '.join(dup['labels'][:3])}...")
-                    if len(duplicates) > 10:
-                        st.info(f"... et {len(duplicates) - 10} autres doublons")
                         
             except Exception as e:
                 st.error(f"Erreur JSON: {str(e)}")
@@ -705,7 +657,7 @@ class MainLayout:
     
     def _render_excel_tools_tab(self, on_tool_action: Callable):
         """Renders simplified BPSS tool"""
-        st.markdown("### 🛠️ Outil BPSS")
+        st.markdown("### Outil BPSS")
         st.caption("Traitement automatique des fichiers budgétaires (PP-E-S, DPP18, BUD45)")
         
         col1, col2, col3 = st.columns(3)
@@ -767,21 +719,65 @@ class MainLayout:
                 st.error("❌ Veuillez charger tous les fichiers requis")
         
     def _render_verification_interface(self):
-        """Rend l'interface de vérification du mapping"""
+        """Rend l'interface de vérification du mapping avec validation"""
         if not st.session_state.get('mapping_report'):
             return
-            
+        
+        # Vérifier si le mapping est déjà appliqué
+        is_applied = st.session_state.get('mapping_validated', False)
+        has_pending = st.session_state.get('pending_mapping') is not None
+        
         report = st.session_state.mapping_report
         
-        # Vérifier que le rapport contient les clés nécessaires
-        required_keys = ['summary', 'by_confidence', 'low_confidence', 'unmapped']
-        if not all(key in report for key in required_keys):
-            st.error("Le rapport de mapping est incomplet")
-            return
+        # Header avec statut
+        col1, col2 = st.columns([3, 1])
+        with col1:
+            st.markdown("### 🔍 Vérification et validation du mapping")
+        with col2:
+            if is_applied:
+                st.success("✅ Appliqué")
+            elif has_pending:
+                st.warning("⏳ En attente")
+            else:
+                st.info("📋 Prêt")
         
-        st.markdown("### Vérification et validation du mapping")
+        # Boutons d'action principaux
+        if has_pending and not is_applied:
+            col1, col2, col3 = st.columns([2, 2, 1])
+            with col1:
+                if st.button("✅ Valider et appliquer le mapping", 
+                            type="primary", 
+                            use_container_width=True,
+                            key="validate_mapping_btn"):
+                    # Appeler la fonction d'application
+                    import asyncio
+                    asyncio.run(apply_validated_mapping())
+            
+            with col2:
+                if st.button("🔄 Refaire le mapping", 
+                            type="secondary",
+                            use_container_width=True,
+                            key="redo_mapping_btn"):
+                    # Réinitialiser
+                    st.session_state.pending_mapping = None
+                    st.session_state.mapping_report = None
+                    st.session_state.mapping_validated = False
+                    st.rerun()
+            
+            with col3:
+                # Exporter le mapping pour révision
+                if st.button("📥 Exporter", key="export_mapping_btn"):
+                    mapping_df = pd.DataFrame(st.session_state.pending_mapping)
+                    csv = mapping_df.to_csv(index=False)
+                    st.download_button(
+                        "💾 CSV",
+                        data=csv,
+                        file_name=f"mapping_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
+                        mime="text/csv"
+                    )
         
         # Métriques de synthèse
+        st.markdown("---")
         col1, col2, col3, col4 = st.columns(4)
         with col1:
             avg_conf = report['summary']['average_confidence']
@@ -801,20 +797,12 @@ class MainLayout:
             unmapped = report['summary']['unmapped_entries']
             st.metric("❌ Non mappés", unmapped)
         
-        # Graphique de répartition par confiance
-        if st.checkbox("📊 Afficher l'analyse détaillée", key="show_confidence_analysis"):
-            conf_data = pd.DataFrame({
-                'Niveau de confiance': list(report['by_confidence'].keys()),
-                'Nombre d\'entrées': list(report['by_confidence'].values())
-            })
-            
-            st.bar_chart(conf_data.set_index('Niveau de confiance'))
-        
         # Tabs pour différentes vues
         verify_tabs = st.tabs([
             "🔍 Révision prioritaire", 
             "❌ Entrées non mappées", 
-            "📊 Vue d'ensemble"
+            "📊 Vue d'ensemble",
+            "✏️ Édition manuelle"  # Nouveau tab
         ])
         
         with verify_tabs[0]:
@@ -825,6 +813,65 @@ class MainLayout:
         
         with verify_tabs[2]:
             self._render_overview_tab(report)
+        
+        with verify_tabs[3]:
+            self._render_manual_edit_tab()  # Nouveau
+
+    # Ajouter la nouvelle méthode pour l'édition manuelle
+    def _render_manual_edit_tab(self):
+        """Tab pour éditer manuellement le mapping"""
+        if not st.session_state.get('pending_mapping'):
+            st.info("Aucun mapping en attente")
+            return
+        
+        st.info("✏️ Modifiez directement les cellules cibles dans le tableau ci-dessous")
+        
+        # Convertir en DataFrame pour édition
+        mapping_df = pd.DataFrame(st.session_state.pending_mapping)
+        
+        # Colonnes à afficher pour l'édition
+        display_cols = ['Description', 'Montant', 'sheet_name', 'cellule', 'confidence_score']
+        edit_df = mapping_df[display_cols].copy()
+        
+        # Editeur de données
+        edited_df = st.data_editor(
+            edit_df,
+            column_config={
+                "Description": st.column_config.TextColumn("Description", disabled=True),
+                "Montant": st.column_config.NumberColumn("Montant", disabled=True),
+                "sheet_name": st.column_config.SelectboxColumn(
+                    "Feuille",
+                    options=st.session_state.excel_workbook.sheetnames if st.session_state.get('excel_workbook') else [],
+                    required=True
+                ),
+                "cellule": st.column_config.TextColumn(
+                    "Cellule",
+                    help="Format: A1, B15, etc.",
+                    required=True
+                ),
+                "confidence_score": st.column_config.NumberColumn(
+                    "Confiance",
+                    min_value=0.0,
+                    max_value=1.0,
+                    format="%.1%",
+                    disabled=True
+                )
+            },
+            use_container_width=True,
+            num_rows="fixed",
+            key="mapping_editor"
+        )
+        
+        # Bouton de sauvegarde des modifications
+        if not edit_df.equals(edited_df):
+            if st.button("💾 Sauvegarder les modifications", use_container_width=True):
+                # Mettre à jour le mapping
+                for idx, row in edited_df.iterrows():
+                    st.session_state.pending_mapping[idx]['sheet_name'] = row['sheet_name']
+                    st.session_state.pending_mapping[idx]['cellule'] = row['cellule']
+                
+                st.success("✅ Modifications sauvegardées!")
+                st.rerun()
     
     def _render_revision_tab(self, report):
         """Tab pour révision prioritaire - CORRIGÉ sans colonnes imbriquées"""
@@ -878,6 +925,7 @@ class MainLayout:
                         with col1:
                             if st.button("✅ Valider", key=f"validate_{i}"):
                                 st.success("Validé!")
+
                         with col2:
                             if st.button("✏️ Modifier", key=f"edit_{i}"):
                                 st.session_state[f'editing_{i}'] = True
