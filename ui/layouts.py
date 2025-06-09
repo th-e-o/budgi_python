@@ -155,7 +155,7 @@ class MainLayout:
         # Interface de vérification si mapping disponible
         if st.session_state.get('mapping_report'):
                 st.markdown("---")
-                self._render_verification_interface()
+                self._render_verification_interface(on_tool_action)
     
     def _render_messages_area(self, on_message_send: Callable):
         """Renders messages area"""
@@ -1006,87 +1006,6 @@ class MainLayout:
                                 st.rerun()
         else:
             st.success("✅ Tous les mappings ont une confiance élevée (> 70%)")
-    
-    def _render_excel_panel(self, on_tool_action: Callable, full_width: bool = False):
-        """Renders Excel panel - VERSION SANS COLONNES IMBRIQUÉES"""
-        # Header
-        st.markdown(f"""
-        <div class="excel-panel{'_full' if full_width else ''}">
-            <div class="excel-header">
-                <h3>Espace Excel</h3>
-                <p style="margin: 0.5rem 0 0 0; opacity: 0.9; font-size: 0.875rem;">
-                    Ajouter un classeur, extraire des données de messages, utiliser l'outil BPSS
-                </p>
-            </div>
-        </div>
-        """, unsafe_allow_html=True)
-        
-        # Content sections
-        with st.container():
-            # Section 1: Données
-            with st.expander("**Données Excel**", expanded=True):
-                st.caption("Visualisez et éditez vos feuilles Excel")
-                self._render_excel_data_tab(on_tool_action)
-            
-            # Section 2: Extraction et Analyse
-            with st.expander("**Extraction et analyse de l'extraction**", expanded=True):
-                st.caption("Extrayez automatiquement les données budgétaires de vos documents")
-                self._render_excel_analysis_tab(on_tool_action)
-            
-            # Section 3: Outil BPSS
-            with st.expander("**Outil BPSS**", expanded=False):
-                st.caption("Traitez automatiquement vos fichiers PP-E-S, DPP18 et BUD45")
-                self._render_excel_tools_tab(on_tool_action)
-        
-        # Interface de vérification HORS DES EXPANDERS pour éviter l'imbrication
-        if st.session_state.get('mapping_report'):
-            st.markdown("---")
-            st.markdown("## 🔍 Vérification du mapping")
-            self._render_verification_interface_simple(on_tool_action)
-
-    def _render_verification_interface_simple(self, on_tool_action: Callable):
-        """Version simplifiée sans colonnes complexes"""
-        if not st.session_state.get('mapping_report'):
-            return
-        
-        is_applied = st.session_state.get('mapping_validated', False)
-        has_pending = st.session_state.get('pending_mapping') is not None
-        report = st.session_state.mapping_report
-        
-        # Statut actuel
-        if is_applied:
-            st.success("✅ Le mapping a été appliqué avec succès!")
-        elif has_pending:
-            st.warning("⏳ Mapping en attente de validation")
-        else:
-            st.info("📋 Mapping prêt")
-        
-        # Actions principales - PAS de colonnes si déjà dans une structure complexe
-        if has_pending and not is_applied:
-            # Boutons en ligne sans colonnes
-            if st.button("✅ Valider et appliquer le mapping", 
-                        type="primary", 
-                        key="validate_mapping_btn"):
-                on_tool_action({'action': 'apply_validated_mapping'})
-            
-            if st.button("🔄 Refaire le mapping", 
-                        type="secondary",
-                        key="redo_mapping_btn"):
-                st.session_state.pending_mapping = None
-                st.session_state.mapping_report = None
-                st.session_state.mapping_validated = False
-                st.rerun()
-            
-            # Export CSV
-            mapping_df = pd.DataFrame(st.session_state.pending_mapping)
-            csv = mapping_df.to_csv(index=False)
-            st.download_button(
-                "📥 Exporter en CSV",
-                data=csv,
-                file_name=f"mapping_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
-                mime="text/csv",
-                key="export_mapping_csv_btn"
-            )
 
     def _render_unmapped_tab(self, report):
         """Tab pour les entrées non mappées - CORRIGÉ"""
