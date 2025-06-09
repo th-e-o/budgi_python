@@ -719,7 +719,7 @@ class MainLayout:
                 st.error("❌ Veuillez charger tous les fichiers requis")
         
     def _render_verification_interface(self, on_tool_action: Callable):
-        """Interface de vérification du mapping - VERSION CORRIGÉE"""
+        """Interface de vérification du mapping - VERSION AMÉLIORÉE"""
         if not st.session_state.get('mapping_report'):
             return
         
@@ -728,104 +728,485 @@ class MainLayout:
         has_pending = st.session_state.get('pending_mapping') is not None
         report = st.session_state.mapping_report
         
-        # Statut et actions principales
+        # Header avec style
+        st.markdown("""
+        <div style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); 
+                    padding: 2rem; border-radius: 10px; margin-bottom: 2rem;">
+            <h2 style="color: white; margin: 0;">🔍 Vérification et Validation du Mapping</h2>
+            <p style="color: rgba(255,255,255,0.9); margin: 0.5rem 0 0 0;">
+                Vérifiez que les données budgétaires sont correctement associées aux cellules Excel
+            </p>
+        </div>
+        """, unsafe_allow_html=True)
+        
+        # Statut avec cards modernes
         if is_applied:
-            st.success("✅ Le mapping a été appliqué avec succès!")
+            st.markdown("""
+            <div style="background: #d4edda; border: 1px solid #c3e6cb; 
+                        border-radius: 8px; padding: 1.5rem; margin-bottom: 1rem;">
+                <h3 style="color: #155724; margin: 0;">✅ Mapping Appliqué avec Succès!</h3>
+                <p style="color: #155724; margin: 0.5rem 0 0 0;">
+                    Les données ont été écrites dans votre fichier Excel.
+                </p>
+            </div>
+            """, unsafe_allow_html=True)
             
-            # Téléchargement du fichier
-            if st.session_state.get('excel_workbook'):
-                excel_bytes = self.services['excel_handler'].save_workbook_to_bytes(
-                    st.session_state.excel_workbook
-                )
-                st.download_button(
-                    "📥 Télécharger Excel mis à jour",
-                    data=excel_bytes,
-                    file_name=f"excel_avec_mapping_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx",
-                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                    use_container_width=True,
-                    type="primary"
-                )
+            # Actions post-mapping
+            col1, col2 = st.columns(2)
+            with col1:
+                if st.session_state.get('excel_workbook'):
+                    excel_bytes = self.services['excel_handler'].save_workbook_to_bytes(
+                        st.session_state.excel_workbook
+                    )
+                    st.download_button(
+                        "📥 Télécharger Excel mis à jour",
+                        data=excel_bytes,
+                        file_name=f"excel_mapping_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx",
+                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                        use_container_width=True,
+                        type="primary"
+                    )
             
-            if st.button("🔄 Faire un nouveau mapping", use_container_width=True):
-                st.session_state.pending_mapping = None
-                st.session_state.mapping_report = None
-                st.session_state.mapping_validated = False
-                st.rerun()
-                
+            with col2:
+                if st.button("🔄 Nouveau mapping", use_container_width=True):
+                    st.session_state.pending_mapping = None
+                    st.session_state.mapping_report = None
+                    st.session_state.mapping_validated = False
+                    st.rerun()
+                    
         elif has_pending:
-            st.warning("⏳ Mapping en attente de validation")
+            # Carte d'état en attente
+            st.markdown("""
+            <div style="background: #fff3cd; border: 1px solid #ffeaa7; 
+                        border-radius: 8px; padding: 1.5rem; margin-bottom: 1rem;">
+                <h3 style="color: #856404; margin: 0;">⏳ Validation Requise</h3>
+                <p style="color: #856404; margin: 0.5rem 0 0 0;">
+                    Vérifiez les associations proposées avant d'appliquer le mapping.
+                </p>
+            </div>
+            """, unsafe_allow_html=True)
             
-            # Boutons d'action
-            col1, col2, col3 = st.columns([2, 2, 1])
+            # Actions principales
+            col1, col2, col3, col4 = st.columns([3, 3, 2, 2])
             
             with col1:
-                if st.button("✅ Valider et appliquer", 
+                if st.button("✅ Tout valider et appliquer", 
                             type="primary", 
-                            use_container_width=True):
+                            use_container_width=True,
+                            help="Applique tous les mappings proposés"):
                     on_tool_action({'action': 'apply_validated_mapping'})
             
             with col2:
-                if st.button("🔄 Refaire le mapping", 
+                if st.button("🔄 Refaire l'analyse", 
                             type="secondary",
-                            use_container_width=True):
+                            use_container_width=True,
+                            help="Relance le mapping avec de nouveaux paramètres"):
                     st.session_state.pending_mapping = None
                     st.session_state.mapping_report = None
                     st.session_state.mapping_validated = False
                     st.rerun()
             
             with col3:
-                # Export CSV
+                # Export pour révision
                 mapping_df = pd.DataFrame(st.session_state.pending_mapping)
                 csv = mapping_df.to_csv(index=False)
                 st.download_button(
-                    "📥 CSV",
+                    "📊 Export CSV",
                     data=csv,
-                    file_name=f"mapping_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
-                    mime="text/csv"
+                    file_name=f"mapping_review_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
+                    mime="text/csv",
+                    use_container_width=True
                 )
+            
+            with col4:
+                # Mode debug
+                debug_mode = st.checkbox("🔧 Debug", key="debug_mapping")
         
-        # Métriques
-        st.markdown("### 📊 Résumé du mapping")
+        # Métriques visuelles améliorées
+        st.markdown("---")
+        
+        # Graphique de synthèse
+        col1, col2 = st.columns([1, 2])
+        
+        with col1:
+            # Gauge de confiance
+            avg_conf = report['summary']['average_confidence']
+            color = "#28a745" if avg_conf > 0.8 else "#ffc107" if avg_conf > 0.6 else "#dc3545"
+            
+            st.markdown(f"""
+            <div style="text-align: center; padding: 1rem;">
+                <div style="position: relative; width: 150px; height: 150px; margin: 0 auto;">
+                    <svg viewBox="0 0 36 36" style="width: 100%; height: 100%;">
+                        <path d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831"
+                            fill="none" stroke="#eee" stroke-width="3"/>
+                        <path d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831"
+                            fill="none" stroke="{color}" stroke-width="3"
+                            stroke-dasharray="{avg_conf * 100}, 100"/>
+                        <text x="18" y="20.35" style="font-size: 10px; text-anchor: middle; fill: #333;">
+                            {avg_conf:.0%}
+                        </text>
+                    </svg>
+                </div>
+                <h4 style="margin-top: 1rem;">Confiance Moyenne</h4>
+            </div>
+            """, unsafe_allow_html=True)
+        
+        with col2:
+            # Barres de progression par catégorie
+            st.markdown("### 📊 Distribution de la Confiance")
+            
+            confidence_data = []
+            colors = ['#28a745', '#90EE90', '#ffc107', '#dc3545']
+            
+            for i, (level, count) in enumerate(report['by_confidence'].items()):
+                if count > 0:
+                    percentage = (count / report['summary']['total_entries']) * 100
+                    st.markdown(f"""
+                    <div style="margin-bottom: 1rem;">
+                        <div style="display: flex; justify-content: space-between; margin-bottom: 0.25rem;">
+                            <span>{level}</span>
+                            <span style="font-weight: bold;">{count} ({percentage:.1f}%)</span>
+                        </div>
+                        <div style="background: #e0e0e0; height: 25px; border-radius: 5px; overflow: hidden;">
+                            <div style="width: {percentage}%; height: 100%; background: {colors[i % len(colors)]}; 
+                                        transition: width 0.5s ease;"></div>
+                        </div>
+                    </div>
+                    """, unsafe_allow_html=True)
+        
+        # Statistiques clés
+        st.markdown("---")
         col1, col2, col3, col4 = st.columns(4)
         
         with col1:
-            avg_conf = report['summary']['average_confidence']
-            color = "🟢" if avg_conf > 0.8 else "🟡" if avg_conf > 0.6 else "🔴"
-            st.metric(f"{color} Confiance moyenne", f"{avg_conf:.1%}")
+            st.metric(
+                "📋 Total entrées", 
+                report['summary']['total_entries'],
+                help="Nombre total d'entrées budgétaires à mapper"
+            )
         
         with col2:
-            high_conf = report['by_confidence'].get('Très élevé (>90%)', 0)
-            st.metric("✅ Haute confiance", high_conf)
+            st.metric(
+                "✅ Mappées", 
+                report['summary']['mapped_entries'],
+                f"+{report['summary']['mapping_rate']:.1f}%",
+                help="Entrées avec une cellule cible identifiée"
+            )
         
         with col3:
-            low_conf = report['by_confidence'].get('Faible (<50%)', 0)
-            needs_review = report['by_confidence'].get('Moyen (50-70%)', 0)
-            st.metric("⚠️ À vérifier", low_conf + needs_review)
+            st.metric(
+                "⚠️ À vérifier", 
+                sum([
+                    report['by_confidence'].get('Moyen (50-70%)', 0),
+                    report['by_confidence'].get('Faible (<50%)', 0)
+                ]),
+                help="Mappings nécessitant une validation manuelle"
+            )
         
         with col4:
-            unmapped = report['summary']['unmapped_entries']
-            st.metric("❌ Non mappés", unmapped)
+            st.metric(
+                "❌ Non mappées", 
+                report['summary']['unmapped_entries'],
+                help="Entrées sans cellule cible trouvée"
+            )
         
-        # Tabs pour les détails - PAS dans un expander
+        # Interface à onglets améliorée
         st.markdown("---")
+        
+        # Style personnalisé pour les tabs
+        st.markdown("""
+        <style>
+            .stTabs [data-baseweb="tab-list"] {
+                gap: 8px;
+            }
+            .stTabs [data-baseweb="tab"] {
+                height: 50px;
+                padding-left: 20px;
+                padding-right: 20px;
+                background-color: #f0f2f6;
+                border-radius: 8px 8px 0 0;
+            }
+            .stTabs [aria-selected="true"] {
+                background-color: #ffffff;
+                border-top: 3px solid #667eea;
+            }
+        </style>
+        """, unsafe_allow_html=True)
+        
         tabs = st.tabs([
-            "🔍 Révision prioritaire", 
-            "❌ Entrées non mappées", 
-            "📊 Vue d'ensemble",
-            "✏️ Édition manuelle"
+            "✅ Validation Rapide",
+            "🔍 Révision Détaillée", 
+            "❌ Non Mappées", 
+            "📊 Vue d'Ensemble",
+            "✏️ Édition Manuelle"
         ])
         
         with tabs[0]:
-            self._render_revision_tab(report)
+            self._render_validation_tab(report, on_tool_action)
         
         with tabs[1]:
-            self._render_unmapped_tab(report)
+            self._render_review_tab(report, debug_mode if 'debug_mode' in locals() else False)
         
         with tabs[2]:
-            self._render_overview_tab(report)
+            self._render_unmapped_tab(report)
         
         with tabs[3]:
+            self._render_overview_tab(report)
+        
+        with tabs[4]:
             self._render_manual_edit_tab()
+
+    def _render_validation_tab(self, report, on_tool_action):
+        """Onglet de validation rapide avec aperçu visuel"""
+        st.markdown("### 🚀 Validation Rapide")
+        st.info("Validez rapidement les mappings avec un aperçu détaillé de chaque association")
+        
+        # Filtres
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            confidence_filter = st.selectbox(
+                "Niveau de confiance",
+                ["Tous", "Haute (>70%)", "Moyenne (50-70%)", "Faible (<50%)"],
+                key="quick_confidence_filter"
+            )
+        with col2:
+            sheet_filter = st.selectbox(
+                "Feuille",
+                ["Toutes"] + list(set(m.get('sheet_name', '') for m in st.session_state.get('pending_mapping', []))),
+                key="quick_sheet_filter"
+            )
+        with col3:
+            search = st.text_input("🔍 Rechercher", placeholder="Description...", key="quick_search")
+        
+        # Préparer les données filtrées
+        mappings = st.session_state.get('pending_mapping', [])
+        filtered_mappings = mappings
+        
+        # Appliquer les filtres
+        if confidence_filter != "Tous":
+            if confidence_filter == "Haute (>70%)":
+                filtered_mappings = [m for m in filtered_mappings if m.get('confidence_score', 0) > 0.7]
+            elif confidence_filter == "Moyenne (50-70%)":
+                filtered_mappings = [m for m in filtered_mappings if 0.5 <= m.get('confidence_score', 0) <= 0.7]
+            else:
+                filtered_mappings = [m for m in filtered_mappings if m.get('confidence_score', 0) < 0.5]
+        
+        if sheet_filter != "Toutes":
+            filtered_mappings = [m for m in filtered_mappings if m.get('sheet_name') == sheet_filter]
+        
+        if search:
+            filtered_mappings = [m for m in filtered_mappings if search.lower() in m.get('Description', '').lower()]
+        
+        # Affichage des mappings
+        st.markdown(f"**{len(filtered_mappings)} associations à valider**")
+        
+        # Container scrollable
+        container = st.container()
+        with container:
+            for idx, mapping in enumerate(filtered_mappings[:20]):  # Limiter à 20 pour la performance
+                # Carte de mapping
+                confidence = mapping.get('confidence_score', 0)
+                conf_color = "#28a745" if confidence > 0.7 else "#ffc107" if confidence > 0.5 else "#dc3545"
+                
+                with st.expander(
+                    f"📄 {mapping.get('Description', '')[:60]}... → 📊 {mapping.get('cellule', 'Non défini')}", 
+                    expanded=(idx < 3)  # Étendre les 3 premiers
+                ):
+                    # Layout en colonnes
+                    col1, col2 = st.columns([3, 2])
+                    
+                    with col1:
+                        # Informations source
+                        st.markdown("**📥 Entrée Budgétaire**")
+                        st.markdown(f"**Description:** {mapping.get('Description', 'N/A')}")
+                        st.markdown(f"**Montant:** {mapping.get('Montant', 0):,.2f} €")
+                        if mapping.get('Axe'):
+                            st.markdown(f"**Axe:** {mapping.get('Axe')}")
+                        if mapping.get('Nature'):
+                            st.markdown(f"**Nature:** {mapping.get('Nature')}")
+                        if mapping.get('SourcePhrase'):
+                            with st.expander("📝 Phrase source"):
+                                st.text(mapping.get('SourcePhrase'))
+                    
+                    with col2:
+                        # Informations cible
+                        st.markdown("**📊 Cellule Excel Cible**")
+                        st.markdown(f"**Cellule:** `{mapping.get('cellule', 'Non défini')}`")
+                        st.markdown(f"**Feuille:** {mapping.get('sheet_name', 'N/A')}")
+                        
+                        # Barre de confiance visuelle
+                        st.markdown(f"""
+                        <div style="margin: 1rem 0;">
+                            <div style="display: flex; justify-content: space-between; margin-bottom: 0.25rem;">
+                                <span>Confiance</span>
+                                <span style="color: {conf_color}; font-weight: bold;">{confidence:.0%}</span>
+                            </div>
+                            <div style="background: #e0e0e0; height: 10px; border-radius: 5px;">
+                                <div style="width: {confidence*100}%; height: 100%; 
+                                            background: {conf_color}; border-radius: 5px;"></div>
+                            </div>
+                        </div>
+                        """, unsafe_allow_html=True)
+                        
+                        # Labels du tag
+                        if mapping.get('labels'):
+                            st.markdown("**🏷️ Labels du tag:**")
+                            for label in mapping.get('labels', [])[:3]:
+                                st.caption(f"• {label}")
+                        
+                        # Méthode de matching
+                        if mapping.get('matches'):
+                            st.markdown("**🔍 Méthode:**")
+                            st.caption(", ".join(mapping.get('matches', [])))
+                    
+                    # Actions
+                    st.markdown("---")
+                    col1, col2, col3 = st.columns(3)
+                    with col1:
+                        if st.button("✅ Valider", key=f"validate_{idx}", use_container_width=True):
+                            st.success("Validé!")
+                    with col2:
+                        if st.button("✏️ Modifier", key=f"edit_{idx}", use_container_width=True):
+                            st.session_state[f'editing_quick_{idx}'] = True
+                    with col3:
+                        if st.button("❌ Rejeter", key=f"reject_{idx}", use_container_width=True):
+                            st.warning("Rejeté - À mapper manuellement")
+            
+            if len(filtered_mappings) > 20:
+                st.info(f"Affichage limité aux 20 premiers résultats sur {len(filtered_mappings)}")
+
+    def _render_review_tab(self, report, debug_mode=False):
+        """Onglet de révision détaillée avec tableaux interactifs"""
+        st.markdown("### 🔍 Révision Détaillée")
+        
+        # Préparer les données
+        if st.session_state.get('pending_mapping'):
+            df = pd.DataFrame(st.session_state.pending_mapping)
+            
+            # Ajouter des colonnes calculées
+            df['Confiance_Level'] = pd.cut(
+                df['confidence_score'], 
+                bins=[0, 0.5, 0.7, 0.9, 1.0],
+                labels=['Faible', 'Moyen', 'Élevé', 'Très élevé']
+            )
+            
+            # Configuration des colonnes pour l'affichage
+            column_config = {
+                "Description": st.column_config.TextColumn(
+                    "Description",
+                    help="Description de l'entrée budgétaire",
+                    width="large"
+                ),
+                "Montant": st.column_config.NumberColumn(
+                    "Montant",
+                    format="%.2f €",
+                    width="small"
+                ),
+                "cellule": st.column_config.TextColumn(
+                    "Cellule Cible",
+                    help="Cellule Excel proposée",
+                    width="small"
+                ),
+                "confidence_score": st.column_config.ProgressColumn(
+                    "Confiance",
+                    format="%.0f%%",  # CORRECTION : Un seul % après le f
+                    min_value=0,
+                    max_value=1,
+                    width="small"
+                ),
+                "Confiance_Level": st.column_config.TextColumn(
+                    "Niveau",
+                    width="small"
+                ),
+                "sheet_name": st.column_config.TextColumn(
+                    "Feuille",
+                    width="small"
+                )
+            }
+            
+            # Si debug mode, ajouter les colonnes supplémentaires
+            if debug_mode:
+                column_config["labels"] = st.column_config.ListColumn(
+                    "Labels du Tag",
+                    help="Labels associés à la cellule cible",
+                    width="medium"
+                )
+                column_config["matches"] = st.column_config.ListColumn(
+                    "Méthodes",
+                    help="Méthodes de matching utilisées",
+                    width="small"
+                )
+                column_config["tag_id"] = st.column_config.TextColumn(
+                    "Tag ID",
+                    width="small"
+                )
+            
+            # Colonnes à afficher
+            display_columns = [
+                'Description', 'Montant', 'cellule', 
+                'confidence_score', 'Confiance_Level', 
+                'sheet_name'
+            ]
+            
+            if debug_mode:
+                display_columns.extend(['labels', 'matches', 'tag_id'])
+            
+            # Filtres interactifs
+            col1, col2 = st.columns([1, 3])
+            with col1:
+                min_conf = st.slider(
+                    "Confiance min.",
+                    0.0, 1.0, 0.0,
+                    0.1,
+                    format="%.0f%%"  # CORRECTION : Format correct pour le slider aussi
+                )
+            
+            # Filtrer les données
+            filtered_df = df[df['confidence_score'] >= min_conf]
+            
+            # S'assurer que toutes les colonnes existent
+            for col in display_columns:
+                if col not in filtered_df.columns:
+                    if col == 'labels':
+                        filtered_df[col] = [[] for _ in range(len(filtered_df))]
+                    elif col == 'matches':
+                        filtered_df[col] = [[] for _ in range(len(filtered_df))]
+                    else:
+                        filtered_df[col] = ''
+            
+            # Afficher le tableau interactif
+            try:
+                edited_df = st.data_editor(
+                    filtered_df[display_columns],
+                    column_config=column_config,
+                    use_container_width=True,
+                    height=500,
+                    num_rows="fixed",
+                    key="detailed_review_editor"
+                )
+            except Exception as e:
+                st.error(f"Erreur d'affichage: {str(e)}")
+                # Fallback : afficher un dataframe simple
+                st.dataframe(filtered_df[display_columns], use_container_width=True, height=500)
+            
+            # Statistiques en bas
+            col1, col2, col3 = st.columns(3)
+            with col1:
+                st.metric("Entrées affichées", len(filtered_df))
+            with col2:
+                if len(filtered_df) > 0:
+                    avg_conf = filtered_df['confidence_score'].mean()
+                    st.metric("Confiance moyenne", f"{avg_conf:.1%}")
+                else:
+                    st.metric("Confiance moyenne", "N/A")
+            with col3:
+                if len(filtered_df) > 0:
+                    low_conf_count = len(filtered_df[filtered_df['confidence_score'] < 0.7])
+                    st.metric("À vérifier", low_conf_count)
+                else:
+                    st.metric("À vérifier", 0)
+        else:
+            st.info("Aucun mapping en attente de révision")
 
     # Ajouter la nouvelle méthode pour l'édition manuelle
     def _render_manual_edit_tab(self):
