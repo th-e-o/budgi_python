@@ -152,8 +152,8 @@ class MainLayout:
                 st.caption("Traitez automatiquement vos fichiers PP-E-S, DPP18 et BUD45")
                 self._render_excel_tools_tab(on_tool_action)
         
-            # Interface de vérification si mapping disponible
-            if st.session_state.get('mapping_report'):
+        # Interface de vérification si mapping disponible
+        if st.session_state.get('mapping_report'):
                 st.markdown("---")
                 self._render_verification_interface()
     
@@ -718,68 +718,21 @@ class MainLayout:
             else:
                 st.error("❌ Veuillez charger tous les fichiers requis")
         
-    def _render_verification_interface(self):
-        """Rend l'interface de vérification du mapping avec validation - VERSION CORRIGÉE"""
+    def _render_verification_interface(self, on_tool_action: Callable):
+        """Interface de vérification du mapping - VERSION CORRIGÉE"""
         if not st.session_state.get('mapping_report'):
             return
         
-        # Vérifier si le mapping est déjà appliqué
+        # Vérifier l'état
         is_applied = st.session_state.get('mapping_validated', False)
         has_pending = st.session_state.get('pending_mapping') is not None
-        
         report = st.session_state.mapping_report
         
-        # Header avec statut
-        col1, col2 = st.columns([3, 1])
-        with col1:
-            st.markdown("### 🔍 Vérification et validation du mapping")
-        with col2:
-            if is_applied:
-                st.success("✅ Appliqué")
-            elif has_pending:
-                st.warning("⏳ En attente")
-            else:
-                st.info("📋 Prêt")
-        
-        # Boutons d'action principaux
-        if has_pending and not is_applied:
-            col1, col2, col3 = st.columns([2, 2, 1])
-            with col1:
-                if st.button("✅ Valider et appliquer le mapping", 
-                            type="primary", 
-                            use_container_width=True,
-                            key="validate_mapping_btn"):
-                    # Appeler la fonction d'application via handle_tool_action
-                    on_tool_action({'action': 'apply_validated_mapping'})
-            
-            with col2:
-                if st.button("🔄 Refaire le mapping", 
-                            type="secondary",
-                            use_container_width=True,
-                            key="redo_mapping_btn"):
-                    # Réinitialiser
-                    st.session_state.pending_mapping = None
-                    st.session_state.mapping_report = None
-                    st.session_state.mapping_validated = False
-                    st.rerun()
-            
-            with col3:
-                # Exporter le mapping pour révision
-                mapping_df = pd.DataFrame(st.session_state.pending_mapping)
-                csv = mapping_df.to_csv(index=False)
-                st.download_button(
-                    "📥 CSV",
-                    data=csv,
-                    file_name=f"mapping_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
-                    mime="text/csv",
-                    key="export_mapping_csv_btn"
-                )
-        
-        elif is_applied:
-            # Mapping déjà appliqué
+        # Statut et actions principales
+        if is_applied:
             st.success("✅ Le mapping a été appliqué avec succès!")
             
-            # Bouton pour télécharger le fichier Excel mis à jour
+            # Téléchargement du fichier
             if st.session_state.get('excel_workbook'):
                 excel_bytes = self.services['excel_handler'].save_workbook_to_bytes(
                     st.session_state.excel_workbook
@@ -793,16 +746,48 @@ class MainLayout:
                     type="primary"
                 )
             
-            # Option pour refaire un nouveau mapping
             if st.button("🔄 Faire un nouveau mapping", use_container_width=True):
                 st.session_state.pending_mapping = None
                 st.session_state.mapping_report = None
                 st.session_state.mapping_validated = False
                 st.rerun()
+                
+        elif has_pending:
+            st.warning("⏳ Mapping en attente de validation")
+            
+            # Boutons d'action
+            col1, col2, col3 = st.columns([2, 2, 1])
+            
+            with col1:
+                if st.button("✅ Valider et appliquer", 
+                            type="primary", 
+                            use_container_width=True):
+                    on_tool_action({'action': 'apply_validated_mapping'})
+            
+            with col2:
+                if st.button("🔄 Refaire le mapping", 
+                            type="secondary",
+                            use_container_width=True):
+                    st.session_state.pending_mapping = None
+                    st.session_state.mapping_report = None
+                    st.session_state.mapping_validated = False
+                    st.rerun()
+            
+            with col3:
+                # Export CSV
+                mapping_df = pd.DataFrame(st.session_state.pending_mapping)
+                csv = mapping_df.to_csv(index=False)
+                st.download_button(
+                    "📥 CSV",
+                    data=csv,
+                    file_name=f"mapping_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
+                    mime="text/csv"
+                )
         
-        # Métriques de synthèse
-        st.markdown("---")
+        # Métriques
+        st.markdown("### 📊 Résumé du mapping")
         col1, col2, col3, col4 = st.columns(4)
+        
         with col1:
             avg_conf = report['summary']['average_confidence']
             color = "🟢" if avg_conf > 0.8 else "🟡" if avg_conf > 0.6 else "🔴"
@@ -821,24 +806,25 @@ class MainLayout:
             unmapped = report['summary']['unmapped_entries']
             st.metric("❌ Non mappés", unmapped)
         
-        # Tabs pour différentes vues
-        verify_tabs = st.tabs([
+        # Tabs pour les détails - PAS dans un expander
+        st.markdown("---")
+        tabs = st.tabs([
             "🔍 Révision prioritaire", 
             "❌ Entrées non mappées", 
             "📊 Vue d'ensemble",
             "✏️ Édition manuelle"
         ])
         
-        with verify_tabs[0]:
+        with tabs[0]:
             self._render_revision_tab(report)
         
-        with verify_tabs[1]:
+        with tabs[1]:
             self._render_unmapped_tab(report)
         
-        with verify_tabs[2]:
+        with tabs[2]:
             self._render_overview_tab(report)
         
-        with verify_tabs[3]:
+        with tabs[3]:
             self._render_manual_edit_tab()
 
     # Ajouter la nouvelle méthode pour l'édition manuelle

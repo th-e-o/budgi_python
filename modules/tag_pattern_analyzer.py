@@ -151,10 +151,13 @@ class TagPatternAnalyzer:
         entry_words = {w for w in entry_words if len(w) > 3}
         pattern_words = {w for w in pattern_words if len(w) > 3}
         
+        # CORRECTION: Vérifier qu'on ne divise pas par zéro
         if entry_words and pattern_words:
             common_words = entry_words & pattern_words
             if common_words:
-                score = len(common_words) / min(len(entry_words), len(pattern_words))
+                min_len = min(len(entry_words), len(pattern_words))
+                if min_len > 0:  # Protection contre division par zéro
+                    score = len(common_words) / min_len
         
         # Bonus si l'année correspond
         if entry_year and entry_year in pattern.years:

@@ -180,15 +180,19 @@ class OptimizedMistralEmbeddingsManager:
                         'method': 'pattern_match_exact_year'
                     })
             else:
-                # Tous les tags du pattern
+                if pattern.years and len(pattern.years) > 0:
+                    items_per_year = max(1, k // len(pattern.years))
+                else:
+                    items_per_year = k
+                
                 for year, tag_ids in pattern.tag_ids_by_year.items():
-                    for tag_id in tag_ids[:max(1, k // len(pattern.years))]:
-                        results.append({
-                            'tag_id': tag_id,
-                            'score': pattern_matches[0][1] * 0.8,
-                            'method': 'pattern_match_any_year'
-                        })
-            
+                                for tag_id in tag_ids[:items_per_year]:
+                                    results.append({
+                                        'tag_id': tag_id,
+                                        'score': pattern_matches[0][1] * 0.8,
+                                        'method': 'pattern_match_any_year'
+                                    })
+                        
             return results[:k]
         
         # Sinon, utiliser les embeddings
