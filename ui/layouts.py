@@ -719,7 +719,7 @@ class MainLayout:
                 st.error("❌ Veuillez charger tous les fichiers requis")
         
     def _render_verification_interface(self):
-        """Rend l'interface de vérification du mapping avec validation"""
+        """Rend l'interface de vérification du mapping avec validation - VERSION CORRIGÉE"""
         if not st.session_state.get('mapping_report'):
             return
         
@@ -749,9 +749,8 @@ class MainLayout:
                             type="primary", 
                             use_container_width=True,
                             key="validate_mapping_btn"):
-                    # Appeler la fonction d'application
-                    import asyncio
-                    asyncio.run(apply_validated_mapping())
+                    # Appeler la fonction d'application via handle_tool_action
+                    on_tool_action({'action': 'apply_validated_mapping'})
             
             with col2:
                 if st.button("🔄 Refaire le mapping", 
@@ -766,15 +765,40 @@ class MainLayout:
             
             with col3:
                 # Exporter le mapping pour révision
-                if st.button("📥 Exporter", key="export_mapping_btn"):
-                    mapping_df = pd.DataFrame(st.session_state.pending_mapping)
-                    csv = mapping_df.to_csv(index=False)
-                    st.download_button(
-                        "💾 CSV",
-                        data=csv,
-                        file_name=f"mapping_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
-                        mime="text/csv"
-                    )
+                mapping_df = pd.DataFrame(st.session_state.pending_mapping)
+                csv = mapping_df.to_csv(index=False)
+                st.download_button(
+                    "📥 CSV",
+                    data=csv,
+                    file_name=f"mapping_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
+                    mime="text/csv",
+                    key="export_mapping_csv_btn"
+                )
+        
+        elif is_applied:
+            # Mapping déjà appliqué
+            st.success("✅ Le mapping a été appliqué avec succès!")
+            
+            # Bouton pour télécharger le fichier Excel mis à jour
+            if st.session_state.get('excel_workbook'):
+                excel_bytes = self.services['excel_handler'].save_workbook_to_bytes(
+                    st.session_state.excel_workbook
+                )
+                st.download_button(
+                    "📥 Télécharger Excel mis à jour",
+                    data=excel_bytes,
+                    file_name=f"excel_avec_mapping_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx",
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    use_container_width=True,
+                    type="primary"
+                )
+            
+            # Option pour refaire un nouveau mapping
+            if st.button("🔄 Faire un nouveau mapping", use_container_width=True):
+                st.session_state.pending_mapping = None
+                st.session_state.mapping_report = None
+                st.session_state.mapping_validated = False
+                st.rerun()
         
         # Métriques de synthèse
         st.markdown("---")
@@ -802,7 +826,7 @@ class MainLayout:
             "🔍 Révision prioritaire", 
             "❌ Entrées non mappées", 
             "📊 Vue d'ensemble",
-            "✏️ Édition manuelle"  # Nouveau tab
+            "✏️ Édition manuelle"
         ])
         
         with verify_tabs[0]:
@@ -815,13 +839,17 @@ class MainLayout:
             self._render_overview_tab(report)
         
         with verify_tabs[3]:
-            self._render_manual_edit_tab()  # Nouveau
+            self._render_manual_edit_tab()
 
     # Ajouter la nouvelle méthode pour l'édition manuelle
     def _render_manual_edit_tab(self):
-        """Tab pour éditer manuellement le mapping"""
+        """Tab pour éditer manuellement le mapping - VERSION CORRIGÉE"""
         if not st.session_state.get('pending_mapping'):
             st.info("Aucun mapping en attente")
+            return
+        
+        if st.session_state.get('mapping_validated'):
+            st.success("✅ Le mapping a déjà été appliqué")
             return
         
         st.info("✏️ Modifiez directement les cellules cibles dans le tableau ci-dessous")
@@ -831,23 +859,39 @@ class MainLayout:
         
         # Colonnes à afficher pour l'édition
         display_cols = ['Description', 'Montant', 'sheet_name', 'cellule', 'confidence_score']
+        
+        # S'assurer que toutes les colonnes existent
+        for col in display_cols:
+            if col not in mapping_df.columns:
+                mapping_df[col] = ''
+        
         edit_df = mapping_df[display_cols].copy()
         
         # Editeur de données
         edited_df = st.data_editor(
             edit_df,
             column_config={
-                "Description": st.column_config.TextColumn("Description", disabled=True),
-                "Montant": st.column_config.NumberColumn("Montant", disabled=True),
+                "Description": st.column_config.TextColumn(
+                    "Description", 
+                    disabled=True,
+                    help="Description de l'entrée budgétaire"
+                ),
+                "Montant": st.column_config.NumberColumn(
+                    "Montant", 
+                    disabled=True,
+                    format="%.2f €"
+                ),
                 "sheet_name": st.column_config.SelectboxColumn(
                     "Feuille",
                     options=st.session_state.excel_workbook.sheetnames if st.session_state.get('excel_workbook') else [],
-                    required=True
+                    required=True,
+                    help="Feuille Excel cible"
                 ),
                 "cellule": st.column_config.TextColumn(
                     "Cellule",
                     help="Format: A1, B15, etc.",
-                    required=True
+                    required=True,
+                    validate=r"^[A-Z]+[0-9]+$"  # Validation regex
                 ),
                 "confidence_score": st.column_config.NumberColumn(
                     "Confiance",
@@ -862,16 +906,42 @@ class MainLayout:
             key="mapping_editor"
         )
         
-        # Bouton de sauvegarde des modifications
-        if not edit_df.equals(edited_df):
-            if st.button("💾 Sauvegarder les modifications", use_container_width=True):
-                # Mettre à jour le mapping
-                for idx, row in edited_df.iterrows():
-                    st.session_state.pending_mapping[idx]['sheet_name'] = row['sheet_name']
-                    st.session_state.pending_mapping[idx]['cellule'] = row['cellule']
-                
-                st.success("✅ Modifications sauvegardées!")
-                st.rerun()
+        # Détecter les modifications
+        has_changes = not edit_df.equals(edited_df)
+        
+        if has_changes:
+            col1, col2 = st.columns(2)
+            
+            with col1:
+                if st.button("💾 Sauvegarder les modifications", 
+                            use_container_width=True,
+                            type="primary"):
+                    # Mettre à jour le mapping
+                    for idx, row in edited_df.iterrows():
+                        if idx < len(st.session_state.pending_mapping):
+                            st.session_state.pending_mapping[idx]['sheet_name'] = row['sheet_name']
+                            st.session_state.pending_mapping[idx]['cellule'] = row['cellule']
+                            # Marquer comme modifié manuellement
+                            st.session_state.pending_mapping[idx]['manually_edited'] = True
+                    
+                    st.success("✅ Modifications sauvegardées!")
+                    st.rerun()
+            
+            with col2:
+                if st.button("❌ Annuler les modifications", 
+                            use_container_width=True,
+                            type="secondary"):
+                    st.rerun()
+        
+        # Instructions d'aide
+        st.markdown("---")
+        st.markdown("""
+        **💡 Aide:**
+        - Double-cliquez sur une cellule pour la modifier
+        - Format cellule : Lettre(s) + Chiffre(s) (ex: A1, AB123)
+        - Utilisez Tab ou Enter pour naviguer
+        - Sauvegardez avant de valider le mapping
+        """)
     
     def _render_revision_tab(self, report):
         """Tab pour révision prioritaire - CORRIGÉ sans colonnes imbriquées"""
@@ -951,6 +1021,87 @@ class MainLayout:
         else:
             st.success("✅ Tous les mappings ont une confiance élevée (> 70%)")
     
+    def _render_excel_panel(self, on_tool_action: Callable, full_width: bool = False):
+        """Renders Excel panel - VERSION SANS COLONNES IMBRIQUÉES"""
+        # Header
+        st.markdown(f"""
+        <div class="excel-panel{'_full' if full_width else ''}">
+            <div class="excel-header">
+                <h3>Espace Excel</h3>
+                <p style="margin: 0.5rem 0 0 0; opacity: 0.9; font-size: 0.875rem;">
+                    Ajouter un classeur, extraire des données de messages, utiliser l'outil BPSS
+                </p>
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
+        
+        # Content sections
+        with st.container():
+            # Section 1: Données
+            with st.expander("**Données Excel**", expanded=True):
+                st.caption("Visualisez et éditez vos feuilles Excel")
+                self._render_excel_data_tab(on_tool_action)
+            
+            # Section 2: Extraction et Analyse
+            with st.expander("**Extraction et analyse de l'extraction**", expanded=True):
+                st.caption("Extrayez automatiquement les données budgétaires de vos documents")
+                self._render_excel_analysis_tab(on_tool_action)
+            
+            # Section 3: Outil BPSS
+            with st.expander("**Outil BPSS**", expanded=False):
+                st.caption("Traitez automatiquement vos fichiers PP-E-S, DPP18 et BUD45")
+                self._render_excel_tools_tab(on_tool_action)
+        
+        # Interface de vérification HORS DES EXPANDERS pour éviter l'imbrication
+        if st.session_state.get('mapping_report'):
+            st.markdown("---")
+            st.markdown("## 🔍 Vérification du mapping")
+            self._render_verification_interface_simple(on_tool_action)
+
+    def _render_verification_interface_simple(self, on_tool_action: Callable):
+        """Version simplifiée sans colonnes complexes"""
+        if not st.session_state.get('mapping_report'):
+            return
+        
+        is_applied = st.session_state.get('mapping_validated', False)
+        has_pending = st.session_state.get('pending_mapping') is not None
+        report = st.session_state.mapping_report
+        
+        # Statut actuel
+        if is_applied:
+            st.success("✅ Le mapping a été appliqué avec succès!")
+        elif has_pending:
+            st.warning("⏳ Mapping en attente de validation")
+        else:
+            st.info("📋 Mapping prêt")
+        
+        # Actions principales - PAS de colonnes si déjà dans une structure complexe
+        if has_pending and not is_applied:
+            # Boutons en ligne sans colonnes
+            if st.button("✅ Valider et appliquer le mapping", 
+                        type="primary", 
+                        key="validate_mapping_btn"):
+                on_tool_action({'action': 'apply_validated_mapping'})
+            
+            if st.button("🔄 Refaire le mapping", 
+                        type="secondary",
+                        key="redo_mapping_btn"):
+                st.session_state.pending_mapping = None
+                st.session_state.mapping_report = None
+                st.session_state.mapping_validated = False
+                st.rerun()
+            
+            # Export CSV
+            mapping_df = pd.DataFrame(st.session_state.pending_mapping)
+            csv = mapping_df.to_csv(index=False)
+            st.download_button(
+                "📥 Exporter en CSV",
+                data=csv,
+                file_name=f"mapping_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
+                mime="text/csv",
+                key="export_mapping_csv_btn"
+            )
+
     def _render_unmapped_tab(self, report):
         """Tab pour les entrées non mappées - CORRIGÉ"""
         unmapped_items = report['unmapped']

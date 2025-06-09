@@ -12,7 +12,9 @@ class Config:
     
     # Mistral API
     MISTRAL_API_URL: str = "https://api.mistral.ai/v1/chat/completions"
+    MISTRAL_EMBEDDINGS_URL: str = "https://api.mistral.ai/v1/embeddings"
     MISTRAL_MODEL: str = "mistral-small-latest"
+    MISTRAL_EMBED_MODEL: str = "mistral-embed"
     
     # Excel Parser
     PARSER_CHUNK_SIZE: int = 800

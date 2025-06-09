@@ -686,12 +686,19 @@ def apply_excel_formulas():
                 st.code(traceback.format_exc(), language="python")
 
 async def map_budget_to_cells():
-    """Mappe les données aux cellules Excel avec gestion du rapport"""
+    """
+    Mappe les données aux cellules Excel - VERSION CORRIGÉE
+    Génère le mapping et prépare pour validation sans appliquer directement
+    """
     if not st.session_state.get('extracted_data') or not st.session_state.get('json_data'):
         st.error("❌ Données manquantes pour le mapping")
         return
     
-    with st.spinner("Mapping en cours..."):
+    if not st.session_state.get('excel_workbook'):
+        st.error("❌ Aucun fichier Excel chargé")
+        return
+    
+    with st.spinner("Analyse et mapping en cours..."):
         try:
             mapper = services['budget_mapper']
             tags = services['json_helper'].get_tags_for_mapping(st.session_state.json_data)
@@ -715,59 +722,66 @@ async def map_budget_to_cells():
             progress_bar.empty()
             progress_text.empty()
             
-            if mapping and st.session_state.excel_workbook:
-                # Enrichir les entrées avec le mapping
-                entries_df = pd.DataFrame(st.session_state.extracted_data)
-                enriched_df = mapper.enrich_entries_with_mapping(entries_df, mapping)
-                
-                # Mettre à jour les données extraites enrichies
-                st.session_state.extracted_data = enriched_df.to_dict('records')
-                st.session_state.pending_mapping = mapping  # stocker le mapping en attente
-                st.session_state.mapping_validated = False  # flag de validation
-                
-                # Générer le rapport de mapping
-                report = mapper.generate_mapping_report(mapping, entries_df)
-                st.session_state.mapping_report = report
-                
-                # Appliquer au workbook
-                success, errors = mapper.apply_mapping_to_excel(
-                    st.session_state.excel_workbook,
-                    mapping,
-                    entries_df
+            if mapping:
+                # Valider le mapping avant de proposer l'application
+                validated_mapping, validation_issues = mapper.validate_and_prepare_mapping(
+                    mapping, 
+                    st.session_state.excel_workbook
                 )
                 
-                # Afficher les résultats
-                if success > 0:
-                    # Message de succès simple
+                if validated_mapping:
+                    # Enrichir les entrées avec le mapping
+                    entries_df = pd.DataFrame(st.session_state.extracted_data)
+                    enriched_df = mapper.enrich_entries_with_mapping(entries_df, validated_mapping)
+                    
+                    # Mettre à jour les données extraites enrichies
+                    st.session_state.extracted_data = enriched_df.to_dict('records')
+                    st.session_state.pending_mapping = validated_mapping  # stocker le mapping validé
+                    st.session_state.mapping_validated = False  # flag de validation
+                    
+                    # Générer le rapport de mapping
+                    report = mapper.generate_mapping_report(validated_mapping, entries_df)
+                    st.session_state.mapping_report = report
+                
                     st.success(f"""
-                    ✅ Mapping terminé avec succès!
+                    ✅ Mapping préparé avec succès!
                     
                     **Résultats:**
-                    - {success} cellules mises à jour
+                    - {len(validated_mapping)} entrées mappées
                     - {report['summary']['mapping_rate']:.1f}% de taux de mapping
                     - {report['summary']['average_confidence']:.1%} de confiance moyenne
+                    """)
                     
-                    👉 Consultez l'interface de vérification dans l'onglet Excel pour valider les mappings.
+                    # Afficher les problèmes de validation s'il y en a
+                    if validation_issues:
+                        for issue in validation_issues[:10]:
+                            st.warning(issue)
+                        if len(validation_issues) > 10:
+                            st.info(f"... et {len(validation_issues) - 10} autres avertissements")
+                    
+                    # Instructions pour la suite
+                    st.info("""
+                    👉 **Prochaines étapes:**
+                    1. Consultez l'interface de vérification dans l'onglet Excel
+                    2. Révisez les mappings à faible confiance
+                    3. Validez et appliquez le mapping quand vous êtes prêt
                     """)
                     
                     # Message dans le chat
                     st.session_state.chat_history.append({
                         'role': 'assistant',
-                        'content': f"✅ Mapping terminé!\n\n• **{success}** cellules mises à jour\n• **{report['summary']['mapping_rate']:.1f}%** de taux de mapping\n• **{report['summary']['average_confidence']:.1%}** de confiance moyenne\n\nConsultez l'interface de vérification dans l'onglet Excel pour valider les mappings.",
+                        'content': f"✅ Mapping préparé!\n\n• **{len(validated_mapping)}** entrées prêtes à mapper\n• **{report['summary']['mapping_rate']:.1f}%** de taux de mapping\n• **{report['summary']['average_confidence']:.1%}** de confiance moyenne\n\nConsultez l'interface de vérification dans l'onglet Excel pour valider et appliquer les mappings.",
                         'timestamp': datetime.now().strftime("%H:%M")
                     })
                     
-                    # Basculer vers la vue Excel pour voir les résultats
+                    # Basculer vers la vue Excel pour la vérification
                     st.session_state.layout_mode = 'excel'
                     st.rerun()
-                    
-                if errors:
-                    # Afficher les erreurs dans un expander
-                    with st.expander("⚠️ Problèmes rencontrés", expanded=False):
-                        for error in errors[:10]:  # Limiter à 10 erreurs
-                            st.warning(error)
-                        if len(errors) > 10:
-                            st.warning(f"... et {len(errors) - 10} autres problèmes")
+                else:
+                    st.error("❌ Aucun mapping valide n'a pu être généré")
+                    if validation_issues:
+                        for issue in validation_issues:
+                            st.error(issue)
             else:
                 st.warning("⚠️ Aucun mapping n'a pu être établi")
                             
@@ -777,9 +791,16 @@ async def map_budget_to_cells():
 
 #Fonction pour appliquer le mapping validé
 async def apply_validated_mapping():
-    """Applique le mapping validé dans Excel"""
-    if not st.session_state.get('pending_mapping') or not st.session_state.get('excel_workbook'):
-        st.error("❌ Aucun mapping validé à appliquer")
+    """
+    Applique le mapping validé dans Excel - VERSION CORRIGÉE
+    Écrit réellement les valeurs dans le workbook et sauvegarde
+    """
+    if not st.session_state.get('pending_mapping'):
+        st.error("❌ Aucun mapping en attente d'application")
+        return
+    
+    if not st.session_state.get('excel_workbook'):
+        st.error("❌ Aucun fichier Excel chargé")
         return
     
     with st.spinner("Application du mapping dans Excel..."):
@@ -787,16 +808,65 @@ async def apply_validated_mapping():
             mapper = services['budget_mapper']
             mapping = st.session_state.pending_mapping
             entries_df = pd.DataFrame(st.session_state.extracted_data)
+            workbook = st.session_state.excel_workbook
             
-            # Appliquer au workbook
-            success_count, errors = mapper.apply_mapping_to_excel(
-                st.session_state.excel_workbook,
+            # Appliquer au workbook avec la nouvelle signature
+            success_count, errors, modified_cells = mapper.apply_mapping_to_excel(
+                workbook,
                 mapping,
                 entries_df
             )
             
             if success_count > 0:
-                st.success(f"✅ {success_count} cellules mises à jour dans Excel!")
+                # IMPORTANT : Sauvegarder le workbook modifié dans un fichier temporaire
+                # pour pouvoir afficher les valeurs mises à jour
+                import tempfile
+                with tempfile.NamedTemporaryFile(suffix='.xlsx', delete=False) as tmp:
+                    workbook.save(tmp.name)
+                    services['excel_handler'].current_path = tmp.name
+                    st.session_state.temp_files.append(tmp.name)
+                
+                # Mettre à jour le workbook en session
+                st.session_state.excel_workbook = workbook
+                
+                # Créer un résumé détaillé
+                summary = mapper.create_mapping_summary(mapping, modified_cells)
+                
+                # Afficher le succès avec détails
+                col1, col2, col3 = st.columns([2, 1, 1])
+                
+                with col1:
+                    st.success(f"""
+                    ✅ Mapping appliqué avec succès!
+                    
+                    **{success_count} cellules** ont été mises à jour dans Excel.
+                    Les montants ont été écrits dans les cellules cibles.
+                    """)
+                
+                with col2:
+                    st.metric("✍️ Cellules modifiées", success_count)
+                
+                with col3:
+                    # Bouton de téléchargement immédiat
+                    excel_bytes = services['excel_handler'].save_workbook_to_bytes(workbook)
+                    st.download_button(
+                        "📥 Télécharger",
+                        data=excel_bytes,
+                        file_name=f"excel_mapping_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx",
+                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                    )
+                
+                # Afficher le résumé détaillé
+                with st.expander("📊 Voir le résumé détaillé", expanded=True):
+                    st.text(summary)
+                    
+                    # Afficher quelques exemples de cellules modifiées
+                    if modified_cells:
+                        st.markdown("### 📝 Exemples de modifications:")
+                        for cell in modified_cells[:5]:
+                            st.success(f"✓ **{cell['sheet']}!{cell['cell']}** = {cell['value']:,.2f} € ({cell['description']})")
+                        if len(modified_cells) > 5:
+                            st.info(f"... et {len(modified_cells) - 5} autres modifications")
                 
                 # Marquer comme appliqué
                 st.session_state.mapping_validated = True
@@ -805,22 +875,36 @@ async def apply_validated_mapping():
                 # Message dans le chat
                 st.session_state.chat_history.append({
                     'role': 'assistant',
-                    'content': f"✅ Mapping appliqué avec succès!\n\n• **{success_count}** cellules mises à jour dans Excel\n• Les montants ont été écrits dans les cellules cibles\n\nVous pouvez maintenant télécharger le fichier Excel mis à jour.",
+                    'content': f"✅ Mapping appliqué avec succès!\n\n• **{success_count}** cellules mises à jour dans Excel\n• Les montants ont été écrits dans les cellules cibles\n\n💾 **Le fichier Excel est prêt** - utilisez le bouton de téléchargement pour récupérer le fichier mis à jour.",
                     'timestamp': datetime.now().strftime("%H:%M")
                 })
                 
+                # Forcer le rafraîchissement pour afficher les nouvelles valeurs
+                st.session_state.selected_sheet = st.session_state.selected_sheet  # Garder la même feuille
                 st.rerun()
+                
             else:
                 st.error("❌ Aucune cellule n'a pu être mise à jour")
                 
+            # Afficher les erreurs s'il y en a
             if errors:
-                with st.expander("⚠️ Problèmes rencontrés"):
+                with st.expander(f"⚠️ {len(errors)} problèmes rencontrés", expanded=False):
                     for error in errors[:10]:
-                        st.warning(error)
+                        if error.startswith("⚠️"):
+                            st.warning(error)
+                        else:
+                            st.error(error)
+                    if len(errors) > 10:
+                        st.info(f"... et {len(errors) - 10} autres problèmes")
                         
         except Exception as e:
             logger.error(f"Erreur application mapping: {str(e)}")
-            st.error(f"❌ Erreur: {str(e)}")
+            st.error(f"❌ Erreur lors de l'application: {str(e)}")
+            
+            # En mode debug, afficher plus de détails
+            if st.session_state.get('debug_mode'):
+                import traceback
+                st.code(traceback.format_exc(), language="python")
 
 # Initialisation des services
 services = init_services()
