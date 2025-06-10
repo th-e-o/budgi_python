@@ -147,7 +147,7 @@ je peux vous aider à :
 • **Analyser vos fichiers Excel** - Chargez un fichier .xlsx pour commencer
 • **Extraire des données budgétaires** - À partir de PDF, Word, emails ou textes
 • **Utiliser l'outil BPSS** - Pour traiter vos fichiers PP-E-S, DPP18 et BUD45
-• **Convertir vos fichiers pdf en word** - A partir d'un fichier glissé-déposé
+• **Convertir vos fichiers pdf en word** - À partir d'un fichier glissé-déposé
 """
 
 def init_session_state():

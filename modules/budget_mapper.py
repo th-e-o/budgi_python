@@ -49,15 +49,31 @@ class BudgetMapper:
                 tag_id = result['tag_id']
                 if tag_id in self.tag_lookup:
                     tag = self.tag_lookup[tag_id]
+
+                    # Bonus de score si l'année correspond
+                    adjusted_score = result['score']
+                    method = result.get('method', 'unknown')
+                    
+                    if entry_year and tag.get('labels'):
+                        # Vérifier si l'année est dans les labels du tag
+                        tag_years = [str(label) for label in tag['labels'] if re.match(r'^20[2-3][0-9]$', str(label))]
+                        if str(entry_year) in tag_years:
+                            adjusted_score *= 1.2  # Bonus de 20% si l'année correspond
+                            method += '_year_match'
+                    
                     candidate_tags.append({
                         'tag': tag,
-                        'score': result['score'],
-                        'method': result.get('method', 'unknown')
+                        'score': min(adjusted_score, 1.0),  # Cap à 1.0
+                        'method': method
                     })
+        
             
             if not candidate_tags:
                 all_mappings.append(self._create_empty_mapping(entry))
                 continue
+
+            # Trier par score ajusté
+            candidate_tags.sort(key=lambda x: x['score'], reverse=True)
             
             # Décision
             if candidate_tags[0]['score'] > 0.85 and candidate_tags[0]['method'] in ['pattern_match_exact_year', 'embedding_with_year']:
@@ -96,6 +112,7 @@ class BudgetMapper:
             'Axe': entry.get('Axe', ''),
             'Nature': entry.get('Nature', ''),
             'Sheet': entry.get('Sheet', ''),
+            'Date': entry.get('Date', ''),
             'tag_id': tag.get('id', ''),
             'cellule': f"{tag.get('sheet_name', '')}!{tag.get('cell_address', '')}",
             'sheet_name': tag.get('sheet_name', ''),
@@ -115,6 +132,7 @@ class BudgetMapper:
             'Axe': entry.get('Axe', ''),
             'Nature': entry.get('Nature', ''),
             'Sheet': entry.get('Sheet', ''),
+            'Date': entry.get('Date', ''),
             'tag_id': None,
             'cellule': None,
             'sheet_name': None,
@@ -136,23 +154,16 @@ class BudgetMapper:
             parts.append(entry['Description'])
         if entry.get('Nature'):
             parts.append(f"{entry['Nature']}")
-        
-        # Ajouter des informations contextuelles
-        if entry.get('Montant'):
-            montant = entry['Montant']
-            if montant >= 1_000_000:
-                parts.append("millions d'euros")
-            elif montant >= 1_000:
-                parts.append("milliers d'euros")
-                
-        # Ajouter l'année si présente dans la description
-        import re
-        year_pattern = r'\b(202[0-9]|203[0-5])\b'
-        text = " ".join(parts)
-        years = re.findall(year_pattern, text)
-        if years:
-            parts.extend([f"année {year}" for year in years])
-                
+        if entry.get('Date'):
+            date_str = str(entry['Date'])
+            # Extraire l'année
+            import re
+            year_match = re.search(r'\b(20[2-3][0-9])\b', date_str)
+            if year_match:
+                year = year_match.group(1)
+                parts.append(f"année {year}")
+                parts.append(year)
+
         return " ".join(parts)
 
     def validate_and_prepare_mapping(self, mapping: List[Dict], 
@@ -379,10 +390,34 @@ class BudgetMapper:
                 summary_lines.append(f"  ... et {len(cells) - 5} autres")
         
         return "\n".join(summary_lines)
+
+
+    def _extract_year_from_entry(self, entry: Dict) -> Optional[int]:
+        """Extrait l'année d'une entrée depuis le champ Date ou la Description"""
+        import re
+        year_pattern = re.compile(r'\b(20[2-3][0-9])\b')
+        
+        # Priorité au champ Date
+        if entry.get('Date'):
+            match = year_pattern.search(str(entry['Date']))
+            if match:
+                return int(match.group(1))
+        
+        # Sinon chercher dans la description
+        if entry.get('Description'):
+            match = year_pattern.search(entry['Description'])
+            if match:
+                return int(match.group(1))
+        
+        return None
+
     
     async def _llm_select_from_candidates(self, entry: Dict, 
-                                        candidates: List) -> Optional[Dict]:
+                                    candidates: List) -> Optional[Dict]:
         """Utilise le LLM pour sélectionner parmi les candidats basés sur embedding"""
+        
+        # NOUVEAU : Extraire l'année pour l'afficher
+        entry_year = self._extract_year_from_entry(entry)
         
         entry_desc = f"""
     Entrée budgétaire:
@@ -390,16 +425,22 @@ class BudgetMapper:
     - Description: {entry.get('Description', 'N/A')}
     - Montant: {entry.get('Montant', 'N/A')} {entry.get('Unité', '')}
     - Nature: {entry.get('Nature', 'N/A')}
+    - Date/Année: {entry.get('Date', entry_year or 'N/A')}  # MODIFIÉ
     - Sheet cible: {entry.get('Sheet', 'N/A')}
     """
         
         candidates_desc = []
         for i, candidate in enumerate(candidates):
-            tag = candidate['tag']  # CORRECTION ICI : candidate['tag'] au lieu de candidate.tag
+            tag = candidate['tag']
             labels_preview = ', '.join(str(l)[:50] for l in tag.get('labels', [])[:3])
+            
+            # NOUVEAU : Identifier si l'année est dans les labels
+            tag_years = [str(label) for label in tag.get('labels', []) if re.match(r'^20[2-3][0-9]$', str(label))]
+            year_info = f" [Années: {', '.join(tag_years)}]" if tag_years else ""
+            
             candidates_desc.append(
                 f"{i}) {tag.get('sheet_name')}!{tag.get('cell_address')} "
-                f"[Similarité: {candidate['score']:.3f}]\n   Labels: {labels_preview}"  # Et ici candidate['score']
+                f"[Similarité: {candidate['score']:.3f}]{year_info}\n   Labels: {labels_preview}"
             )
             
         prompt = f"""{entry_desc}
@@ -407,7 +448,8 @@ class BudgetMapper:
     Cellules candidates (classées par similarité sémantique):
     {chr(10).join(candidates_desc)}
 
-    Choisis le numéro (0-9) de la cellule la plus appropriée ou 'AUCUN'."""
+    IMPORTANT : Privilégier les cellules dont l'année correspond à celle de l'entrée budgétaire.
+    Choisis le numéro (0-{len(candidates)-1}) de la cellule la plus appropriée ou 'AUCUN'."""
         
         messages = [
             {"role": "system", "content": "Expert en mapping budgétaire. Répond uniquement avec le numéro ou 'AUCUN'."},
@@ -425,8 +467,8 @@ class BudgetMapper:
                         selected = candidates[idx]
                         return self._create_detailed_mapping(
                             entry, 
-                            selected['tag'],  # CORRECTION : selected['tag'] au lieu de selected.tag
-                            selected['score'],  # CORRECTION : selected['score'] au lieu de selected.score
+                            selected['tag'],
+                            selected['score'],
                             ['llm_selected', f'from_top_{len(candidates)}']
                         )
         except Exception as e:

@@ -41,24 +41,6 @@ class BudgetExtractor:
             logger.error(f"Erreur extraction budget: {str(e)}")
             return []
     
-    def _extract_year_from_entry(self, entry: Dict) -> Optional[int]:
-        """Extrait l'année d'une entrée budgétaire"""
-        import re
-        year_pattern = re.compile(r'\b(20[2-3][0-9])\b')
-        
-        # Chercher dans tous les champs
-        search_fields = ['Date']
-        
-        for field in search_fields:
-            if field in entry and entry[field]:
-                text = str(entry[field])
-                match = year_pattern.search(text)
-                if match:
-                    return int(match.group(1))
-        
-        return None
-
-    
     def _normalize_amount(self, amount_str: str) -> float:
         """Normalise un montant en nombre"""
         # Nettoyer la chaîne
