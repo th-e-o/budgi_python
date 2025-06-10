@@ -1,7 +1,7 @@
 import streamlit.components.v1 as components
 import os
 
-_RELEASE = False  # Set to False for development
+_RELEASE = True  # Set to False for development
 
 if not _RELEASE:
     _univer_sheet_component = components.declare_component(
@@ -10,7 +10,7 @@ if not _RELEASE:
     )
 else:
     parent_dir = os.path.dirname(os.path.abspath(__file__))
-    build_dir = os.path.join(parent_dir, "frontend/build")
+    build_dir = os.path.join(parent_dir, "frontend/excel_viewer/build")
     _univer_sheet_component = components.declare_component(
         "univer_sheet_component", path=build_dir
     )
