@@ -1026,7 +1026,9 @@ class MainLayout:
                 # Carte de mapping
                 confidence = mapping.get('confidence_score', 0)
                 conf_color = "#28a745" if confidence > 0.7 else "#ffc107" if confidence > 0.5 else "#dc3545"
-                
+
+                date_info = f" ({mapping.get('Date', '')})" if mapping.get('Date') else ""                
+
                 with st.expander(
                     f"📄 {mapping.get('Description', '')[:60]}... → 📊 {mapping.get('cellule', 'Non défini')}", 
                     expanded=(idx < 3)  # Étendre les 3 premiers
@@ -1043,6 +1045,8 @@ class MainLayout:
                             st.markdown(f"**Axe:** {mapping.get('Axe')}")
                         if mapping.get('Nature'):
                             st.markdown(f"**Nature:** {mapping.get('Nature')}")
+                        if mapping.get('Date'):
+                            st.markdown(f"**📅 Date/Année:** {mapping.get('Date')}")
                         if mapping.get('SourcePhrase'):
                             with st.expander("📝 Phrase source"):
                                 st.text(mapping.get('SourcePhrase'))
@@ -1116,6 +1120,11 @@ class MainLayout:
                     help="Description de l'entrée budgétaire",
                     width="large"
                 ),
+                "Date": st.column_config.TextColumn(  
+                    "Date/Année",
+                    help="Date ou année de l'entrée",
+                    width="small"
+                ),
                 "Montant": st.column_config.NumberColumn(
                     "Montant",
                     format="%.2f €",
@@ -1162,7 +1171,7 @@ class MainLayout:
             
             # Colonnes à afficher
             display_columns = [
-                'Description', 'Montant', 'cellule', 
+                'Description', 'Date', 'Montant', 'cellule', 
                 'confidence_score', 'Confiance_Level', 
                 'sheet_name'
             ]

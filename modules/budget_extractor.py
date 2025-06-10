@@ -34,12 +34,36 @@ class BudgetExtractor:
             for entry in enriched_data:
                 if 'Montant' in entry:
                     entry['Montant'] = self._normalize_amount(str(entry['Montant']))
-            
+                if 'Date' not in entry:
+                    # Essayer d'extraire l'année de la description si pas de date
+                    year = self._extract_year_from_entry(entry)
+                    if year:
+                        entry['Date'] = str(year)
+                    else:
+                        entry['Date'] = ''
+           
             return enriched_data
             
         except Exception as e:
             logger.error(f"Erreur extraction budget: {str(e)}")
             return []
+    
+    def _extract_year_from_entry(self, entry: Dict) -> Optional[int]:
+        """Extrait l'année d'une entrée budgétaire"""
+        import re
+        year_pattern = re.compile(r'\b(20[2-3][0-9])\b')
+        
+        # Chercher dans tous les champs pertinents
+        search_fields = ['Date', 'Description', 'Axe', 'Nature']
+        
+        for field in search_fields:
+            if field in entry and entry[field]:
+                text = str(entry[field])
+                match = year_pattern.search(text)
+                if match:
+                    return int(match.group(1))
+        
+        return None
     
     def _normalize_amount(self, amount_str: str) -> float:
         """Normalise un montant en nombre"""

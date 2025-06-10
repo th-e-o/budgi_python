@@ -36,6 +36,10 @@ class BudgetMapper:
                 progress = 20 + (idx / len(entries)) * 80
                 progress_callback(progress, f"Mapping {idx+1}/{len(entries)}")
             
+            entry_year = self._extract_year_from_entry(entry)
+            if entry_year:
+                logger.info(f"Mapping entrée {idx}: {entry.get('Description', '')[:50]}... (année {entry_year})")
+           
             # Recherche optimisée
             results = await self.embeddings_manager.search_for_entry(entry, k=10)
             
@@ -53,6 +57,8 @@ class BudgetMapper:
                     # Bonus de score si l'année correspond
                     adjusted_score = result['score']
                     method = result.get('method', 'unknown')
+
+                    entry_year = self._extract_year_from_entry(entry)
                     
                     if entry_year and tag.get('labels'):
                         # Vérifier si l'année est dans les labels du tag
@@ -415,8 +421,9 @@ class BudgetMapper:
     async def _llm_select_from_candidates(self, entry: Dict, 
                                     candidates: List) -> Optional[Dict]:
         """Utilise le LLM pour sélectionner parmi les candidats basés sur embedding"""
-        
-        # NOUVEAU : Extraire l'année pour l'afficher
+        import re 
+
+        # Extraire l'année pour l'afficher
         entry_year = self._extract_year_from_entry(entry)
         
         entry_desc = f"""
@@ -434,7 +441,7 @@ class BudgetMapper:
             tag = candidate['tag']
             labels_preview = ', '.join(str(l)[:50] for l in tag.get('labels', [])[:3])
             
-            # NOUVEAU : Identifier si l'année est dans les labels
+            #  Identifier si l'année est dans les labels
             tag_years = [str(label) for label in tag.get('labels', []) if re.match(r'^20[2-3][0-9]$', str(label))]
             year_info = f" [Années: {', '.join(tag_years)}]" if tag_years else ""
             
