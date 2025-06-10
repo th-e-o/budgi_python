@@ -170,19 +170,38 @@ class MainLayout:
             
             # Quick actions for assistant messages
             if msg['role'] == 'assistant' and i == len(st.session_state.chat_history) - 1:
-                # Only show quick actions for the last assistant message
                 if st.session_state.get('current_file'):
-                    col1, col2, col3 = st.columns([1, 1, 3])
+                    col1, col2, col3, col4 = st.columns([1, 1, 1, 2])
+                    # Only show quick actions for the last assistant message
                     with col1:
                         if st.button("📊 Extraire", key=f"quick_extract_{i}"):
                             st.session_state.pending_action = {'type': 'extract_budget'}
                             st.rerun()
+
                     with col2:
                         if st.button("🛠️ BPSS", key=f"quick_bpss_{i}"):
                             st.session_state.excel_tab = 'tools'
                             st.session_state.layout_mode = 'excel'
                             st.rerun()
-        
+                    if st.session_state.get('is_pdf_loaded', False) and st.session_state.get('current_file', {}).get('name', '').endswith('.pdf'):
+                        with col3:
+                            if st.button("📄 → Word", key=f"convert_pdf_{i}", 
+                                        help="Convertir en document Word"):
+                                st.session_state.pending_action = {'type': 'convert_pdf'}
+                                st.rerun()
+                            # Bouton de téléchargement si conversion disponible
+            if (msg.get('has_download') and 
+                st.session_state.get('converted_docx')):
+                
+                docx_info = st.session_state.converted_docx
+                st.download_button(
+                    "📥 Télécharger le fichier Word",
+                    data=docx_info['bytes'],
+                    file_name=docx_info['filename'],
+                    mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                    key=f"download_docx_{i}"
+                )
+
         # Typing indicator
         if st.session_state.get('is_typing', False):
             st.markdown(self.chat_components.render_typing_indicator(), unsafe_allow_html=True)

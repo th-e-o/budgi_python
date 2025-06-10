@@ -11,6 +11,7 @@ import os
 import pandas as pd
 from modules.excel_parser.parser_v3 import ExcelFormulaParser, ParserConfig, FormulaCell
 from modules.budget_mapper import BudgetMapper
+from modules.pdf_to_word_converter import PDFToWordConverter
 from typing import List
 
 # Configuration de la page
@@ -130,7 +131,8 @@ def init_services():
         'budget_extractor': BudgetExtractor(),
         'bpss_tool': BPSSTool(),
         'json_helper': JSONHelper(),
-        'budget_mapper': BudgetMapper(MistralClient())
+        'budget_mapper': BudgetMapper(MistralClient()), 
+        'pdf_converter': PDFToWordConverter(),
     }
     
     # Nettoyage automatique des fichiers temporaires
@@ -166,6 +168,9 @@ def init_session_state():
         'excel_tab': 'data',  # Ajouter pour gérer l'onglet actif
         'pending_mapping': None,       # Mapping en attente de validation
         'mapping_validated': False,    # Flag indiquant si le mapping a été appliqué
+        'is_pdf_loaded': False,
+        'converted_docx': None,
+        'pdf_convert_preserve_layout': True,
     }
     
     # Initialiser les valeurs par défaut
@@ -241,6 +246,9 @@ async def process_message():
 
 async def handle_file_upload(uploaded_file):
     """Gère l'upload d'un fichier"""
+    # Réinitialiser les états PDF si on charge un nouveau fichier
+    st.session_state.is_pdf_loaded = False
+    st.session_state.converted_docx = None
     # Éviter les doublons
     file_key = f"{uploaded_file.name}_{uploaded_file.size}"
     if file_key in st.session_state.processed_files:
@@ -302,7 +310,24 @@ async def process_file(uploaded_file):
                 import json
                 st.session_state.json_data = json.loads(content)
                 response = f"✅ Fichier JSON de configuration chargé. Il contient {len(st.session_state.json_data.get('tags', []))} tags pour le mapping automatique."
+
+            elif uploaded_file.name.endswith('.pdf'):
+                # Stocker qu'il s'agit d'un PDF pour la conversion
+                st.session_state.is_pdf_loaded = True
                 
+                # Obtenir les infos du PDF
+                pdf_info = services['pdf_converter'].get_pdf_info(temp_path)
+                
+                response = f"✅ J'ai chargé votre fichier PDF '{uploaded_file.name}'. "
+                if pdf_info.get('pages'):
+                    response += f"Il contient {pdf_info['pages']} pages. "
+                
+                response += "\n\nVoici un aperçu :\n\n{preview}\n\nQue souhaitez-vous faire avec ce fichier ?"
+                
+                # Si c'est un PDF, proposer la conversion
+                if pdf_info.get('has_text', False):
+                    response += "\n\n💡 **Astuce :** Vous pouvez convertir ce PDF en Word avec le bouton ci-dessous."
+
             else:
                 # Résumé pour autres types
                 preview = content[:200] + "..." if len(content) > 200 else content
@@ -326,6 +351,61 @@ async def process_file(uploaded_file):
     
     st.session_state.is_typing = False
     st.rerun()
+
+async def convert_pdf_to_word():
+    """Convertit le PDF chargé en document Word"""
+    if not st.session_state.get('current_file'):
+        st.error("❌ Aucun fichier PDF chargé")
+        return
+    
+    file_info = st.session_state.current_file
+    if not file_info['name'].endswith('.pdf'):
+        st.error("❌ Le fichier actuel n'est pas un PDF")
+        return
+    
+    with st.spinner("Conversion en cours... Cela peut prendre quelques instants pour les gros fichiers."):
+        try:
+            # Options de conversion
+            preserve_layout = st.session_state.get('pdf_convert_preserve_layout', True)
+            
+            # Convertir
+            docx_bytes = services['pdf_converter'].convert_pdf_bytes_to_docx(
+                file_info['raw_bytes'],
+                preserve_layout=preserve_layout
+            )
+            
+            if docx_bytes:
+                # Créer le nom du fichier de sortie
+                original_name = Path(file_info['name']).stem
+                output_name = f"{original_name}_converti.docx"
+                
+                # Stocker le résultat
+                st.session_state.converted_docx = {
+                    'bytes': docx_bytes,
+                    'filename': output_name,
+                    'original_pdf': file_info['name']
+                }
+                
+                # Ajouter un message de succès
+                st.session_state.chat_history.append({
+                    'role': 'assistant',
+                    'content': f"✅ J'ai converti votre PDF en document Word !\n\n"
+                             f"**Fichier original :** {file_info['name']}\n"
+                             f"**Fichier converti :** {output_name}\n\n"
+                             f"Utilisez le bouton de téléchargement ci-dessous pour récupérer le fichier Word.",
+                    'timestamp': datetime.now().strftime("%H:%M"),
+                    'has_download': True
+                })
+                
+                st.success("✅ Conversion réussie!")
+                st.rerun()
+                
+            else:
+                st.error("❌ Erreur lors de la conversion")
+                
+        except Exception as e:
+            logger.error(f"Erreur conversion PDF: {str(e)}")
+            st.error(f"❌ Erreur lors de la conversion: {str(e)}")
 
 def handle_tool_action(action: dict):
     """Gère les actions des outils"""
@@ -363,6 +443,9 @@ def handle_tool_action(action: dict):
     
     elif action_type == 'apply_validated_mapping':
         asyncio.run(apply_validated_mapping())
+    
+    elif action_type == 'convert_pdf':
+        asyncio.run(convert_pdf_to_word())
 
 async def extract_budget_data():
     """Extrait les données budgétaires"""

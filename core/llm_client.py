@@ -81,7 +81,9 @@ class MistralClient:
         prompt = (
             "Tu es un assistant budgétaire. "
             "Analyse le texte fourni et retourne UNIQUEMENT un tableau JSON avec les données budgétaires détectées au format : "
-            '[ {"Axe":..., "Description":..., "Montant":..., "Unité":..., "Probabilite":..., "Date":..., "Nature":...} ]'
+            "Pour chaque entrée, capture OBLIGATOIREMENT l'année ou la date si elle est mentionnées"
+            '[ {"Axe":..., "Description":..., "Montant":..., "Unité":..., "Probabilite":..., "Date": "YYYY" ou "DD-MM-YYYY", "Nature":...} ]'
+            "Si plusieurs années sont mentionnées, créer une entrée par année."
         )
         
         messages = [

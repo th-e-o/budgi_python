@@ -60,7 +60,10 @@ class BudgetExtractor:
             return float(amount_str)
         except ValueError:
             return 0.0
-    
+
+
+
+
     def _attach_source_phrases(self, budget_data: List[Dict], full_text: str) -> List[Dict]:
         """Attache les phrases sources aux données extraites"""
         #TODO Modifier le code pour que la source phrase des mails soit seulement issue du corps du mail
