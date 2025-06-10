@@ -2,7 +2,10 @@
 import streamlit as st
 from typing import Dict, Any, Callable, Optional
 from datetime import datetime
+
+from modules.excel.excel_serializer import ExcelSerializer
 from .components.chat import ChatComponents
+from .components.excel_component import excel_viewer
 from .components.inputs import InputComponents
 import base64
 import time
@@ -140,7 +143,7 @@ class MainLayout:
             # Section 1: Données
             with st.expander("**Données Excel**", expanded=True):
                 st.caption("Visualisez et éditez vos feuilles Excel")
-                self._render_excel_data_tab(on_tool_action)  # Passer on_tool_action
+                self._render_excel_data_tab()  # Passer on_tool_action
             
             # Section 2: Extraction et Analyse
             with st.expander("**Extraction et analyse de l'extraction**", expanded=True):
@@ -217,21 +220,27 @@ class MainLayout:
             if 'last_file_key' not in st.session_state or st.session_state.last_file_key != file_key:
                 st.session_state.last_file_key = file_key
                 on_file_upload(uploaded_file)
-    
-    def _render_excel_data_tab(self, on_tool_action: Callable):
+
+    def _render_excel_data_tab(self):
         excel_handler = self.services['excel_handler']
 
         if not excel_handler.has_workbook():
-            # Clean upload area
+            st.info("Chargez ou glissez-déposez un fichier Excel pour commencer.")
             uploaded = st.file_uploader(
                 "📂 Charger un fichier Excel",
                 type=['xlsx'],
                 key="excel_upload_main",
+                label_visibility="collapsed",
                 help="Glissez-déposez ou cliquez pour parcourir"
             )
-            
+
             if uploaded:
+                if 'excel_initialized' in st.session_state:
+                    del st.session_state['excel_initialized']
                 try:
+                    if 'excel_json_cache' in st.session_state:
+                        del st.session_state['excel_json_cache']
+
                     excel_handler.load_workbook_from_bytes(uploaded.getbuffer())
                     st.session_state.current_file = {
                         'name': uploaded.name,
@@ -241,250 +250,57 @@ class MainLayout:
                     st.rerun()
 
                 except Exception as e:
-                    st.error(f"Erreur: {str(e)}")
+                    st.error(f"Erreur lors du chargement du fichier: {str(e)}")
         else:
-            formula_wb = excel_handler.formula_workbook
-            sheets = formula_wb.sheetnames
-            
-            # Initialiser la feuille sélectionnée si nécessaire
-            if 'selected_sheet' not in st.session_state:
-                st.session_state.selected_sheet = sheets[0] if sheets else None
-            
-            # Vérifier que la feuille sélectionnée existe toujours
-            if st.session_state.selected_sheet not in sheets:
-                st.session_state.selected_sheet = sheets[0] if sheets else None
-            
-            col1, col2, col3, col4 = st.columns([3, 1, 1, 1])
-
+            # --- Toolbar ---
+            col1, col2 = st.columns([4, 1])
             with col1:
-                # Sélecteur de feuille sans callback complexe
-                selected_sheet = st.selectbox(
-                    "Sélectionner une feuille",
-                    sheets,
-                    key="sheet_selector_main",
-                    index=sheets.index(st.session_state.get('selected_sheet', sheets[0])) if st.session_state.get('selected_sheet', sheets[0]) in sheets else 0
-                )
-                
-                # Détecter le changement de feuille
-                if selected_sheet != st.session_state.get('selected_sheet'):
-                    st.session_state.selected_sheet = selected_sheet
-                    # Nettoyer les données en cache pour forcer le rechargement
-                    if 'excel_data_cache' in st.session_state:
-                        del st.session_state.excel_data_cache
-                    st.rerun()
-
+                st.caption(f"Fichier chargé : **{st.session_state.current_file['name']}**")
             with col2:
-                display_mode = st.selectbox(
-                    "Afficher",
-                    ["Valeurs", "Formules"],
-                    key="display_mode_toggle",
-                    help="Basculez entre les valeurs calculées et les formules originales."
-                )
-
-            with col3:
-                # Show button to calculate/re-calculate formulas
-                if excel_handler.is_display_stale():
-                    if st.button("🔄 Calculer les formules", type="primary"):
-                        on_tool_action({'action': 'apply_formulas'})
-                else:
-                    st.button("✅ À jour", disabled=True, help="Les valeurs calculées sont à jour.")
-
-            with col4:
                 st.download_button(
-                    "💾",
-                    data=excel_handler.save_workbook_to_bytes(formula_wb),
-                    file_name=f"export_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx",
-                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                    "💾 Télécharger le classeur",
+                    data=excel_handler.save_workbook_to_bytes(excel_handler.formula_workbook),
+                    file_name=f"export_{st.session_state.current_file['name']}",
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    use_container_width=True
                 )
-                        
-            # Display data
-            if selected_sheet:
+
+            st.markdown("<hr style='margin: 0.5rem 0;'>", unsafe_allow_html=True)
+
+            # --- Caching and Serialization ---
+            initial_data = None
+            update_command = st.session_state.get('excel_update_command', None)
+
+            # We only serialize and send the full data if the component hasn't been initialized yet.
+            if 'excel_initialized' not in st.session_state:
+                with st.spinner("Préparation de l'affichage Excel..."):
+                    serializer = ExcelSerializer.from_workbook(excel_handler.formula_workbook)
+                    initial_data = serializer.serialize_to_json()
+                st.session_state.excel_initialized = True  # Set the flag
+
+            # --- UniverJS Component Rendering ---
+            component_response = excel_viewer(
+                initial_data=initial_data,
+                update_command=update_command,
+                height=800,
+                key="univer_excel_viewer",
+                default=None
+            )
+
+            if 'excel_update_command' in st.session_state:
+                del st.session_state['excel_update_command']
+
+            # --- Handling Component Callbacks ---
+            if component_response:
+                logger.info(f"Received cell change from component: {component_response}")
+
                 try:
-                    if display_mode == "Valeurs":
-                        display_wb = excel_handler.display_workbook
-
-                        if display_wb is None:
-                            st.info(
-                                "Les valeurs ne sont pas encore calculées. Affichez les formules ou cliquez sur 'Calculer'.")
-                            display_wb = formula_wb  # Fallback to formula view
-                    else:
-                        display_wb = formula_wb
-
-                    if selected_sheet not in display_wb.sheetnames:
-                        st.warning(
-                            "Cette feuille n'existe pas dans le classeur affiché. Retour à la version originale.")
-                        display_wb = formula_wb
-
-                    # Charger les données de la feuille
-                    df = self.services['excel_handler'].sheet_to_dataframe(
-                        display_wb,
-                        selected_sheet
-                    )
-                    
-                    # Assurer que le DataFrame a une taille minimale pour l'édition
-                    if df.empty or len(df) < 20 or len(df.columns) < 10:
-                        # Étendre le DataFrame
-                        min_rows = max(20, len(df))
-                        min_cols = max(10, len(df.columns))
-                        
-                        # Créer un nouveau DataFrame avec la taille minimale
-                        new_df = pd.DataFrame(index=range(min_rows), columns=range(min_cols))
-                        
-                        # Copier les données existantes
-                        if not df.empty:
-                            for i in range(min(len(df), min_rows)):
-                                for j in range(min(len(df.columns), min_cols)):
-                                    new_df.iloc[i, j] = df.iloc[i, j] if i < len(df) and j < len(df.columns) else None
-                        
-                        df = new_df
-                    
-                    # Créer une clé unique pour chaque combinaison feuille + mode
-                    editor_key = f"excel_editor_{selected_sheet}_{display_mode}"
-                    
-                    # Configuration du data editor
-                    column_config = {}
-                    for col in df.columns:
-                        column_config[col] = st.column_config.TextColumn(
-                            str(col),
-                            help=f"Colonne {col}",
-                            default="",
-                            max_chars=None,
-                            validate=None
-                        )
-                    
-                    # Data editor avec configuration améliorée
-                    edited_df = st.data_editor(
-                        df,
-                        use_container_width=True,
-                        height=400,
-                        num_rows="dynamic",
-                        key=editor_key,
-                        column_config=column_config,
-                        hide_index=False,
-                        disabled=False  # S'assurer que l'édition est activée
-                    )
-                    
-                    # Bouton de sauvegarde toujours visible pour éviter les problèmes de détection
-                    col1, col2, col3 = st.columns([1, 2, 1])
-                    with col2:
-                        if st.button("💾 Sauvegarder les modifications", ...):
-                            try:
-                                # Use the new handler method to update the sheet
-                                excel_handler.update_sheet_from_dataframe(edited_df, selected_sheet)
-                                st.success(f"✅ Modifications sauvegardées dans {selected_sheet}!")
-                                time.sleep(0.5)
-                                st.rerun()
-                            except Exception as e:
-                                st.error(f"❌ Erreur lors de la sauvegarde: {str(e)}")
-                                logger.error(f"Erreur sauvegarde: {str(e)}", exc_info=True)
-                    
-                    # Aide pour l'utilisateur - utiliser info au lieu d'expander
-                    st.info("""
-                    💡 **Aide pour l'édition** : Double-cliquez sur une cellule pour la modifier. 
-                    Utilisez Tab ou Enter pour naviguer. Cliquez sur "+" pour ajouter des lignes. 
-                    Sauvegardez vos modifications avec le bouton 💾.
-                    """)
-                    
-                    # Afficher les détails des formules parsées si disponibles
-                    if st.session_state.get('parsed_formulas'):
-                        formulas = st.session_state.parsed_formulas
-                        stats = formulas.get('statistics', {})
-                        
-                        st.markdown("---")
-                        st.markdown("### 📊 Résultats du parsing des formules")
-                        
-                        # Métriques de synthèse
-                        col1, col2, col3 = st.columns(3)
-                        with col1:
-                            st.metric("Total", stats.get('total', 0))
-                        with col2:
-                            st.metric("Succès", stats.get('success', 0))
-                        with col3:
-                            st.metric("Erreurs", stats.get('errors', 0))
-                        
-                        # Créer des tabs au lieu de checkboxes pour éviter les problèmes
-                        if stats.get('errors', 0) > 0 or formulas.get('formulas'):
-                            tab1, tab2, tab3 = st.tabs(["📊 Résumé", "⚠️ Erreurs", "🔍 Exemples"])
-                            
-                            with tab1:
-                                # Aide contextuelle
-                                if stats.get('success', 0) > 0:
-                                    st.info("""
-                                    💡 **Pour voir les valeurs calculées** : 
-                                    1. Cliquez sur "⚡ Appliquer" pour calculer les formules
-                                    2. Sélectionnez "Valeurs" dans le menu déroulant "Afficher"
-                                    3. Les résultats s'afficheront à la place des formules
-                                    """)
-                                
-                                # Bouton pour télécharger le script Python généré
-                                if formulas.get('script_file'):
-                                    try: 
-                                        with open(formulas['script_file'], 'r', encoding='utf-8') as f:
-                                            script_content = f.read()
-                                        st.download_button(
-                                            "📥 Télécharger le script Python",
-                                            data=script_content,
-                                            file_name="excel_formulas.py",
-                                            mime="text/x-python",
-                                            help="Script Python généré pour appliquer les formules"
-                                        )
-                                    except FileNotFoundError:
-                                        st.warning("Le fichier de script n'est plus disponible")
-                            
-                            with tab2:
-                                # Détails des erreurs si présentes
-                                if st.session_state.get('formula_errors'):
-                                    st.warning(f"{len(st.session_state.formula_errors)} erreurs détectées")
-                                    
-                                    # Au lieu d'un container avec des expanders, utiliser un simple listing
-                                    for i, err in enumerate(st.session_state.formula_errors[:10]):
-                                        st.markdown(f"### Erreur {i+1}: {err['cell']}")
-                                        st.error(err['error'])
-                                        if 'formula' in err:
-                                            st.code(f"Formule: {err['formula']}", language="excel")
-                                        if 'python_code' in err and st.session_state.get('debug_mode'):
-                                            with st.expander("Voir le code Python généré"):
-                                                st.code(err['python_code'], language="python")
-                                        st.markdown("---")
-                                    
-                                    if len(st.session_state.formula_errors) > 10:
-                                        st.info(f"... et {len(st.session_state.formula_errors) - 10} autres erreurs")
-                                else:
-                                    st.success("✅ Aucune erreur détectée")
-
-                            # Et pour tab3 (exemples), simplifier aussi :
-                            with tab3:
-                                # Exemples de formules converties
-                                if formulas.get('formulas'):
-                                    examples = [f for f in formulas['formulas'] if f.python_code and not f.error][:5]
-                                    if examples:
-                                        for i, f in enumerate(examples):
-                                            st.markdown(f"### {f.sheet}!{f.address}")
-                                            
-                                            # Utiliser des colonnes au lieu d'expander
-                                            col1, col2 = st.columns(2)
-                                            
-                                            with col1:
-                                                st.markdown("**Formule Excel:**")
-                                                st.code(f.formula, language="excel")
-                                            
-                                            with col2:
-                                                st.markdown("**Code Python:**")
-                                                st.code(f.python_code, language="python")
-                                            
-                                            # Afficher la valeur si disponible
-                                            if hasattr(f, 'value') and f.value is not None:
-                                                st.success(f"Valeur calculée: {f.value}")
-                                            
-                                            st.markdown("---")
-                                    else:
-                                        st.info("Aucun exemple disponible (toutes les formules ont des erreurs)")
-                                else:
-                                    st.info("Aucune formule parsée")
+                    # Apply the change to the in-memory workbook
+                    excel_handler.apply_component_update(component_response)
 
                 except Exception as e:
-                    st.error(f"Erreur affichage: {str(e)}")
-                    logger.error(f"Erreur affichage feuille {selected_sheet}: {str(e)}", exc_info=True)
+                    st.error(f"Impossible d'appliquer la modification: {e}")
+                    logger.error(f"Failed to apply component update: {e}", exc_info=True)
     
     def _render_excel_analysis_tab(self, on_tool_action: Callable):
         """Renders simplified analysis tab"""

@@ -5,11 +5,8 @@ from typing import Optional, Any, Dict
 import logging
 import tempfile
 import os
-from copy import copy
 
 from openpyxl.utils.dataframe import dataframe_to_rows
-from modules.excel_parser.parser_v4 import SimpleExcelFormulaParser
-from modules.excel_parser.parser_v5 import ComplexExcelFormulaParser
 
 logger = logging.getLogger(__name__)
 
@@ -24,7 +21,6 @@ class UpdatedExcelHandler:
         self._formula_workbook: Optional[openpyxl.Workbook] = None
         self._display_workbook: Optional[openpyxl.Workbook] = None
         self._is_stale: bool = True
-        self._parser = ComplexExcelFormulaParser()
         self.temp_files = []
         logger.info("ExcelHandler initialized.")
 
@@ -52,6 +48,14 @@ class UpdatedExcelHandler:
             self._is_stale = True
             logger.info("Display workbook manually invalidated.")
 
+    def save_to_temp_file(self, workbook: openpyxl.Workbook) -> str:
+        """Creates a temporary file for storing the workbook."""
+        temp_file = tempfile.NamedTemporaryFile(delete=False, suffix='.xlsx')
+        temp_file.close()  # Close the file so it can be written to later
+        workbook.save(temp_file.name)
+        self.temp_files.append(temp_file.name)
+        return temp_file.name
+
     def load_workbook_from_bytes(self, file_bytes: bytes) -> openpyxl.Workbook:
         """Loads a workbook from bytes, resetting the current state."""
         with tempfile.NamedTemporaryFile(delete=False, suffix='.xlsx') as tmp_file:
@@ -60,7 +64,7 @@ class UpdatedExcelHandler:
         self.temp_files.append(temp_path)
 
         wb = openpyxl.load_workbook(
-            temp_path, data_only=False, keep_vba=True, keep_links=False
+            temp_path, data_only=False, keep_vba=False, keep_links=False
         )
 
         self._formula_workbook = wb
@@ -79,6 +83,49 @@ class UpdatedExcelHandler:
         self._is_stale = True
         logger.info("Formula workbook has been replaced. Display workbook is stale.")
 
+    def apply_component_update(self, update_data: Dict[str, Any]):
+        """
+        Applies a cell update received from the UniverJS frontend component.
+        The update format is: {"sheet": "SheetName", "range": "A1", "value": {row_idx: {col_idx: {v: value}}}, ...}
+        """
+        if not self.has_workbook():
+            logger.warning("No workbook loaded, cannot apply update.")
+            return
+
+        sheet_name = update_data.get('sheet')
+        values = update_data.get('value')
+
+        if not sheet_name or not values or not isinstance(values, dict):
+            logger.warning(f"Invalid update data received: {update_data}")
+            return
+
+        if sheet_name not in self.formula_workbook.sheetnames:
+            logger.error(f"Sheet '{sheet_name}' not found in workbook. Cannot apply update.")
+            return
+
+        sheet = self.formula_workbook[sheet_name]
+        logger.info(f"Applying component update to sheet: {sheet_name}")
+
+        try:
+            # The 'value' dictionary contains row and column indices (0-based)
+            for row_idx_str, cols in values.items():
+                for col_idx_str, cell_data in cols.items():
+                    # openpyxl is 1-indexed, so we add 1
+                    row = int(row_idx_str) + 1
+                    col = int(col_idx_str) + 1
+
+                    # The actual new value is nested under the 'v' key
+                    new_value = cell_data.get('v')
+
+                    # Apply the new value to the cell
+                    sheet.cell(row=row, column=col).value = new_value
+                    logger.debug(f"Updated cell ({row}, {col}) in '{sheet_name}' to: {new_value}")
+
+        except (ValueError, TypeError) as e:
+            logger.error(f"Error parsing update data: {e}. Data: {update_data}", exc_info=True)
+        except Exception as e:
+            logger.error(f"An unexpected error occurred while applying update: {e}", exc_info=True)
+
     def compute_display_workbook(self):
         """
         Computes formulas from the formula_workbook and updates the display_workbook.
@@ -89,7 +136,9 @@ class UpdatedExcelHandler:
 
         logger.info("Computing formulas for the display workbook...")
         try:
-            self._display_workbook, error_report = self._parser.parse_and_apply(self._formula_workbook)
+            self._display_workbook, error_report = self._parser.parse_and_apply(
+                self.save_to_temp_file(self._formula_workbook)
+            )
             print(error_report)
             self._is_stale = False
             logger.info("Display workbook computed successfully.")

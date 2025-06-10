@@ -1,0 +1,55 @@
+/* UniverSheet.css - Fixes for UniverJS styling conflicts */
+
+.univer-container {
+  padding: 20px;
+  background: white;
+  min-height: 100vh;
+}
+
+.univer-container h2 {
+  margin: 0 0 20px 0;
+  color: #333;
+  font-size: 1.5em;
+}
+
+/* Reset styles specifically for UniverJS container */
+.univer-sheet-container {
+  /* Force light theme for UniverJS */
+  color-scheme: light !important;
+  background: white !important;
+}
+
+/* Override any dark theme colors that might affect UniverJS */
+.univer-sheet-container * {
+  color-scheme: light !important;
+}
+
+/* Ensure UniverJS canvas and cells render properly */
+.univer-sheet-container canvas {
+  background: white !important;
+}
+
+/* Fix any text color issues in UniverJS */
+.univer-sheet-container .univer-cell,
+.univer-sheet-container .univer-cell-content {
+  color: #000 !important;
+  background: white !important;
+}
+
+/* Make sure UniverJS toolbar and UI elements are visible */
+.univer-sheet-container .univer-toolbar,
+.univer-sheet-container .univer-formula-bar {
+  background: #f8f9fa !important;
+  color: #000 !important;
+}
+
+/* Ensure proper sizing */
+.univer-sheet-container > div {
+  width: 100% !important;
+  height: 100% !important;
+}
+
+/* Fix any z-index issues */
+.univer-sheet-container .univer-overlay {
+  z-index: 1000;
+}

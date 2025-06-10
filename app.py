@@ -11,11 +11,8 @@ import os
 import pandas as pd
 
 from core.updated_excel_handler import UpdatedExcelHandler
-from modules.excel_parser.parser_v3 import ExcelFormulaParser, ParserConfig, FormulaCell
 from modules.budget_mapper import BudgetMapper
 from typing import List
-
-from modules.excel_parser.parser_v4 import SimpleExcelFormulaParser
 
 # Configuration de la page
 st.set_page_config(
@@ -356,15 +353,8 @@ def handle_tool_action(action: dict):
     elif action_type == 'process_bpss':
         asyncio.run(process_bpss(action.get('data')))
         
-    elif action_type == 'parse_excel':
-        pass
-        # parse_excel_formulas()
-        
     elif action_type == 'map_budget_cells':
         asyncio.run(map_budget_to_cells())
-        
-    elif action_type == 'apply_formulas':
-        apply_excel_formulas2()
 
 async def extract_budget_data():
     """Extrait les données budgétaires"""
@@ -492,111 +482,6 @@ async def process_bpss(data: dict):
     except Exception as e:
         logger.error(f"Erreur BPSS: {str(e)}")
         st.error(f"❌ Erreur: {str(e)}")
-
-def parse_excel_formulas():
-    """Parse les formules Excel avec le parseur Python amélioré"""
-    if not st.session_state.current_file:
-        st.error("❌ Aucun fichier Excel chargé")
-        return
-    
-    with st.spinner("Analyse des formules Excel..."):
-        try:
-            # Configuration du parseur
-            parser_config = ParserConfig(
-                chunk_size=800,
-                workers=4,
-                progress_enabled=True
-            )
-            
-            # Créer une instance du parseur
-            parser = ExcelFormulaParser(parser_config)
-            
-            # Sauvegarder temporairement le fichier
-            with temporary_file(st.session_state.current_file['raw_bytes'], suffix='.xlsx') as path:
-                # Parser le fichier
-                result = parser.parse_excel_file(path, emit_script=True)
-                
-                st.session_state.parsed_formulas = result
-                stats = result['statistics']
-                
-                # Afficher les résultats
-                if stats['success'] > 0:
-                    st.success(f"✅ {stats['success']}/{stats['total']} formules converties avec succès")
-                    
-                    # Ajouter un message dans le chat
-                    st.session_state.chat_history.append({
-                        'role': 'assistant',
-                        'content': f"✅ J'ai analysé **{stats['total']} formules Excel** dans votre fichier.\n\n"
-                                 f"• **{stats['success']}** formules converties avec succès ({stats['success_rate']}%)\n"
-                                 f"• **{stats['errors']}** formules avec erreurs\n\n"
-                                 f"Un script Python a été généré pour appliquer ces formules.",
-                        'timestamp': datetime.now().strftime("%H:%M")
-                    })
-                    
-                    # Activer le bouton d'application si succès
-                    if result.get('script_file'):
-                        st.session_state.formula_script_ready = True
-                else:
-                    st.warning(f"⚠️ Aucune formule n'a pu être convertie sur {stats['total']} trouvées")
-                
-        except Exception as e:
-            logger.error(f"Erreur parsing: {str(e)}")
-            st.error(f"❌ Erreur: {str(e)}")
-
-def apply_excel_formulas2():
-    """Applique les formules parsées au workbook display_workbook"""
-    if not services['excel_handler'].has_workbook():
-        st.error("❌ Aucun fichier Excel chargé")
-        return
-
-    with st.spinner("Application des formules en cours..."):
-        try:
-            # Use the new handler method
-            services['excel_handler'].compute_display_workbook()
-
-            st.success("✅ Formules calculées avec succès!")
-
-            st.session_state.chat_history.append({
-                'role': 'assistant',
-                'content': "✅ J'ai calculé les formules dans votre fichier Excel.\n"
-                           "Basculez en mode 'Valeurs' pour voir les résultats calculés.",
-                'timestamp': datetime.now().strftime("%H:%M")
-            })
-
-            st.rerun()
-
-        except Exception as e:
-            logger.error(f"Erreur calcul formules: {str(e)}")
-            st.error(f"❌ Erreur lors du calcul: {str(e)}")
-
-
-def apply_excel_formulas():
-    """Applique les formules parsées au workbook avec le nouveau parser"""
-    if not st.session_state.get('excel_workbook'):
-        st.error("❌ Aucun fichier Excel chargé")
-        return
-
-    with st.spinner("Application des formules en cours..."):
-        try:
-            parser = SimpleExcelFormulaParser()
-            calculated_wb = parser.parse_and_apply(st.session_state.excel_workbook)
-
-            st.session_state.displayed_excel_workbook = calculated_wb
-
-            st.success("✅ Formules calculées avec succès!")
-
-            st.session_state.chat_history.append({
-                'role': 'assistant',
-                'content': "✅ J'ai calculé les formules dans votre fichier Excel.\n"
-                           "Basculez en mode 'Valeurs' pour voir les résultats calculés.",
-                'timestamp': datetime.now().strftime("%H:%M")
-            })
-
-            st.rerun()
-
-        except Exception as e:
-            logger.error(f"Erreur calcul formules: {str(e)}")
-            st.error(f"❌ Erreur lors du calcul: {str(e)}")
 
 
 async def map_budget_to_cells():
