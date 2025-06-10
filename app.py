@@ -147,6 +147,7 @@ je peux vous aider à :
 • **Analyser vos fichiers Excel** - Chargez un fichier .xlsx pour commencer
 • **Extraire des données budgétaires** - À partir de PDF, Word, emails ou textes
 • **Utiliser l'outil BPSS** - Pour traiter vos fichiers PP-E-S, DPP18 et BUD45
+• **Convertir vos fichiers pdf en word** - A partir d'un fichier glissé-déposé
 """
 
 def init_session_state():
@@ -1029,6 +1030,9 @@ def main():
         
         if action['type'] == 'extract_budget':
             asyncio.run(extract_budget_data())
+        
+        elif action['type'] == 'convert_pdf':  
+            asyncio.run(convert_pdf_to_word())
     
     # Créer et rendre l'interface
     layout = MainLayout(services)
