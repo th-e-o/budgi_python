@@ -107,9 +107,7 @@ const UniverStreamlitComponent: React.FC<ComponentProps> = (props) => {
 						try {
 							const univerCell = fWorksheet.getRange(coordinate)
 							if (value !== null && value !== undefined) {
-								if (type === "f") {
-									univerCell.setFormula(value)
-								} else {
+								if (type !== "f") {
 									univerCell.setValue(value)
 								}
 							}
@@ -274,6 +272,35 @@ const UniverStreamlitComponent: React.FC<ComponentProps> = (props) => {
 					})
 				}
 			})
+
+			sheetNames.forEach((sheetName) => {
+				const sheet = sheetData[sheetName]
+				console.log(`Processing sheet: ${sheetName}`)
+
+				const fWorksheet = fWorkbook.getSheetByName(sheetName)
+
+				if (sheet.valuesWithTypes) {
+					Object.keys(sheet.valuesWithTypes).forEach((coordinate) => {
+						const valueAndTypes = sheet.valuesWithTypes[coordinate]
+						const value = valueAndTypes.value
+						const type = valueAndTypes.type
+						if (!fWorksheet) {
+							return
+						}
+						try {
+							const univerCell = fWorksheet.getRange(coordinate)
+							if (value !== null && value !== undefined) {
+								if (type === "f") {
+									univerCell.setFormula(value)
+								}
+							}
+						} catch (error) {
+							console.warn(`Failed to set value for cell ${coordinate}:`, error, { type, value })
+						}
+					})
+				}
+			})
+
 			setTimeout(() => {
 				if (!univerInstanceRef.current) return // Guard against component unmount
 
@@ -307,6 +334,7 @@ const UniverStreamlitComponent: React.FC<ComponentProps> = (props) => {
 				isLoadingRef.current = false
 
 			}, 0) // A delay of 0ms is enough to push it to the next event loop tick.
+
 
 			// Delete sheets
 			for (let i = existingSheets.length - 1; i >= 0; i--) {
