@@ -48,24 +48,50 @@ const UniverStreamlitComponent: React.FC<ComponentProps> = (props) => {
 			}
 
 			// Create new workbook with the complete IWorkbookData structure
-			const newWorkbook = univerInstanceRef.current.createWorkbook(workbookData)
+			const definedNames = workbookData.definedNames;
+			delete workbookData.definedNames
+			var newWorkbook = univerInstanceRef.current.createWorkbook(workbookData)
 
 			if (!newWorkbook) {
 				console.error("Failed to create workbook from data")
 				return
 			}
 
-			Object.entries(workbookData.definedNames).forEach((o: any) =>{
-				newWorkbook.insertDefinedName(o.name, o.formulaRefOrString);
+			definedNames.forEach((o: any) =>{
+				console.log(o.n)
+				console.log(o.formulaRefOrString)
+				newWorkbook = newWorkbook.insertDefinedName(o.n, o.formulaRefOrString);
 			})
 
-			console.log("Successfully loaded workbook, starting calculation...")
-			const formula = univerInstanceRef.current?.getFormula()
-			if (formula) formula.executeCalculation();
-			else console.warn("Formula engine not available, skipping calculation execution.")
+			console.log("Successfully loaded workbook, starting calculation in 3 seconds")
+			setTimeout(() => {
+				if (!univerInstanceRef.current) {
+					console.log("Univer instance disposed, skipping scheduled calculation.")
+					return
+				}
 
-			await formula.whenComputingCompleteAsync().then(() => isLoadingRef.current = false)
-			console.log("Finished calculation execution.")
+				const formula = univerInstanceRef.current.getFormula()
+				if (formula) {
+					console.log("Starting asynchronous formula calculation...")
+					isLoadingRef.current = true
+
+					formula.executeCalculation()
+
+					formula.whenComputingCompleteAsync()
+						.then(() => {
+							console.log("Asynchronous formula calculation finished.")
+						})
+						.catch((err: any) => {
+							console.error("Error during asynchronous formula calculation:", err)
+						})
+						.finally(() => {
+							// Always set the loading flag to false when calculation is done or has failed
+							isLoadingRef.current = false
+						})
+				} else {
+					console.warn("Formula engine not available, skipping scheduled calculation.")
+				}
+			}, 3000) // 3000ms = 3 seconds
 
 			// Activate the first sheet
 			const sheets = newWorkbook.getSheets()

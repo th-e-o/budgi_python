@@ -58,7 +58,7 @@ class ExcelToUniverConverter:
             "styles": {},
             "sheets": {},
             "sheetOrder": [],
-            "definedNames": [{'name': p, 'formulaRefOrString': n.attr_text} for p, n in self.workbook.defined_names.items()]
+            "definedNames": [{'n': p, 'formulaRefOrString': n.attr_text.replace('$','')} for p, n in self.workbook.defined_names.items()]
         }
 
         # Process each sheet
