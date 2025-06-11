@@ -19,13 +19,16 @@ class ExcelUtils:
         last_row_with_data = 0
         last_col_with_data = 0
 
-        # More efficient: iterate only through the known data range
-        for row in range(1, sheet.max_row + 1):
-            for col in range(1, sheet.max_column + 1):
+        max_row = sheet.max_row
+        max_col = sheet.max_column
+
+        for row in range(1, max_row + 1):
+            for col in range(1, max_col + 1):
                 cell = sheet.cell(row, col)
                 if cell.value is not None:
-                    last_row_with_data = max(last_row_with_data, row)
-                    last_col_with_data = max(last_col_with_data, col)
+                    last_row_with_data = row
+                    if col > last_col_with_data:
+                        last_col_with_data = col
 
         return last_row_with_data, last_col_with_data
 
@@ -97,11 +100,10 @@ class ExcelUtils:
         return ExcelUtils._rgb_to_hex(ExcelUtils._ms_hls_to_rgb(h, ExcelUtils._tint_luminance(tint, l), s))
 
     @staticmethod
-    def extract_cell_colors(cell: Cell, theme_colors: List[str]) -> Tuple[str, str]:
+    def extract_cell_colors(fill, font, theme_colors: List[str]) -> Tuple[str, str]:
         """
         Extracts the background and font color from a cell
         """
-        fill = cell.fill
         base_fill_color = 'FFFFFF'  # Default to white if no fill color is found
         if isinstance(fill, StyleProxy) and (fill.patternType is None or fill.patternType == "solid"):
             # FgColor is the solid fill color. Apply its tint.
@@ -123,7 +125,6 @@ class ExcelUtils:
             else:
                 base_fill_color = 'FFFFFF'
 
-        font = cell.font
         font_color_hex = '000000'  # Default to black if no color is set
         if font.color is not None:
             if font.color.type == 'rgb':
@@ -186,7 +187,6 @@ class ExcelUtils:
             border_info['diagonal_up'] = border.diagonalUp
             border_info['diagonal_down'] = border.diagonalDown
 
-        # Only return border_info if it has any borders
         return border_info if border_info else None
 
     @staticmethod

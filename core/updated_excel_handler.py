@@ -6,6 +6,9 @@ import logging
 import tempfile
 import os
 
+from openpyxl.cell import MergedCell
+from openpyxl.utils import rows_from_range
+from openpyxl.utils.cell import coordinate_from_string, range_boundaries
 from openpyxl.utils.dataframe import dataframe_to_rows
 
 logger = logging.getLogger(__name__)
@@ -118,8 +121,24 @@ class UpdatedExcelHandler:
                     new_value = cell_data.get('v')
 
                     # Apply the new value to the cell
-                    sheet.cell(row=row, column=col).value = new_value
-                    logger.debug(f"Updated cell ({row}, {col}) in '{sheet_name}' to: {new_value}")
+                    cell = sheet.cell(row=row, column=col)
+                    if cell.data_type == 'f':
+                        continue
+
+                    if isinstance(cell, MergedCell):
+                        # Find the merged range that contains this cell
+                        for merged_range in sheet.merged_cells.ranges:
+                            if cell.coordinate in merged_range:
+                                # Get the top-left cell of the merged range
+                                top_left_cell = sheet.cell(row=merged_range.min_row, column=merged_range.min_col)
+                                # Make sure we got the actual cell, not another MergedCell
+                                if not isinstance(top_left_cell, MergedCell):
+                                    top_left_cell.value = new_value
+                                break
+                    else:
+                        cell.value = new_value
+
+            logger.info(f"Updated cell ({row}, {col}) in '{sheet_name}' to: {new_value}")
 
         except (ValueError, TypeError) as e:
             logger.error(f"Error parsing update data: {e}. Data: {update_data}", exc_info=True)

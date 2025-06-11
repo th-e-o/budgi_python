@@ -3,6 +3,7 @@ import streamlit as st
 from typing import Dict, Any, Callable, Optional
 from datetime import datetime
 
+from core.ExcelToUniverConverter import ExcelToUniverConverter
 from modules.excel.excel_serializer import ExcelSerializer
 from .components.chat import ChatComponents
 from .components.excel_component import excel_viewer
@@ -274,9 +275,11 @@ class MainLayout:
             # We only serialize and send the full data if the component hasn't been initialized yet.
             if 'excel_initialized' not in st.session_state:
                 with st.spinner("Préparation de l'affichage Excel..."):
-                    serializer = ExcelSerializer.from_workbook(excel_handler.formula_workbook)
-                    initial_data = serializer.serialize_to_json()
+                    serializer = ExcelToUniverConverter(excel_handler.formula_workbook)
+                    initial_data = serializer.convert()
+
                 st.session_state.excel_initialized = True  # Set the flag
+                logger.info("Finished serializing json for display")
 
             # --- UniverJS Component Rendering ---
             component_response = excel_viewer(
