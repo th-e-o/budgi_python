@@ -31,7 +31,6 @@ st.set_page_config(
 from core.llm_client import MistralClient
 from core.file_handler import FileHandler
 from core.chat_handler import ChatHandler
-from core.excel_handler import ExcelHandler
 from modules.budget_extractor import BudgetExtractor
 from modules.bpss_tool import BPSSTool
 from modules.json_helper import JSONHelper
