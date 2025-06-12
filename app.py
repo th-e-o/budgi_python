@@ -135,6 +135,8 @@ def init_services():
         'pdf_converter': PDFToWordConverter(),
     }
     
+    st.session_state['excel_handler'] = services['excel_handler'] #Stocker excel_handler pour y accéder depuis json_helper
+
     # Nettoyage automatique des fichiers temporaires
     import atexit
     atexit.register(lambda: services['excel_handler'].cleanup_temp_files())

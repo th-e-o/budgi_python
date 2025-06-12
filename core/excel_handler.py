@@ -16,6 +16,8 @@ class ExcelHandler:
         self.current_workbook = None
         self.current_path = None
         self.temp_files = []
+        self.values_workbook = None
+        self.values_path = None
     
     def load_workbook(self, file_path: str) -> openpyxl.Workbook:
         """Charge un workbook depuis un fichier"""
@@ -59,7 +61,31 @@ class ExcelHandler:
         except Exception as e:
             logger.error(f"Erreur chargement workbook depuis bytes: {str(e)}")
             raise
-    
+
+    def get_values_workbook(self) -> Optional[openpyxl.Workbook]:
+        """
+        Obtient un workbook avec les valeurs calculées (data_only=True)
+        Le crée ou le met à jour si nécessaire
+        """
+        if not self.current_path or not os.path.exists(self.current_path):
+            logger.warning("Aucun fichier Excel actuellement chargé")
+            return None
+        
+        try:
+            # Toujours recharger pour avoir les dernières valeurs
+            self.values_workbook = openpyxl.load_workbook(
+                self.current_path, 
+                data_only=True,
+                keep_vba=False,
+                keep_links=False
+            )
+            self.values_path = self.current_path
+            logger.info("Workbook avec valeurs rechargé")
+            return self.values_workbook
+        except Exception as e:
+            logger.error(f"Erreur chargement workbook avec valeurs: {str(e)}")
+            return None
+
     def save_workbook_to_bytes(self, workbook: openpyxl.Workbook) -> bytes:
         """Sauvegarde un workbook en bytes"""
         try:
@@ -114,7 +140,7 @@ class ExcelHandler:
             raise
     
     def sheet_to_dataframe(self, workbook: openpyxl.Workbook, sheet_name: str, 
-                       show_formulas: bool = False) -> pd.DataFrame:
+                    show_formulas: bool = False) -> pd.DataFrame:
         """Convertit une feuille en DataFrame"""
         if sheet_name not in workbook.sheetnames:
             raise ValueError(f"Feuille '{sheet_name}' non trouvée")
@@ -122,12 +148,11 @@ class ExcelHandler:
         sheet = workbook[sheet_name]
         data = []
         
-        # Si on veut les valeurs et qu'on a un chemin de fichier, recharger en mode data_only
-        if not show_formulas and self.current_path and os.path.exists(self.current_path):
-            try:
-                # Charger une copie du workbook en mode data_only pour obtenir les valeurs
-                wb_values = openpyxl.load_workbook(self.current_path, data_only=True)
-                sheet_values = wb_values[sheet_name]
+        # Si on veut les valeurs, utiliser le workbook avec valeurs
+        if not show_formulas:
+            values_wb = self.get_values_workbook()
+            if values_wb and sheet_name in values_wb.sheetnames:
+                sheet_values = values_wb[sheet_name]
                 
                 # Lire les valeurs calculées
                 for row in sheet_values.iter_rows():
@@ -135,37 +160,23 @@ class ExcelHandler:
                     for cell in row:
                         row_data.append(cell.value)
                     data.append(row_data)
-                
-                wb_values.close()
-                
-            except Exception as e:
-                logger.warning(f"Impossible de charger les valeurs calculées: {str(e)}")
-                # Fallback: utiliser les valeurs du workbook actuel
+            else:
+                # Fallback: utiliser le workbook actuel
                 for row in sheet.iter_rows():
                     row_data = []
                     for cell in row:
-                        # En mode valeurs, essayer d'obtenir la valeur interne si possible
-                        if hasattr(cell, '_value') and cell._value is not None:
-                            row_data.append(cell._value)
+                        # En mode valeurs sans workbook de valeurs
+                        if hasattr(cell, 'value') and isinstance(cell.value, str) and cell.value.startswith('='):
+                            row_data.append(f"[{cell.value}]")
                         else:
                             row_data.append(cell.value)
                     data.append(row_data)
         else:
-            # Mode formules ou pas de fichier : afficher formules/valeurs telles quelles
+            # Mode formules : afficher formules/valeurs telles quelles
             for row in sheet.iter_rows():
                 row_data = []
                 for cell in row:
-                    if show_formulas:
-                        # Mode formules : toujours afficher la valeur brute (formule si présente)
-                        row_data.append(cell.value)
-                    else:
-                        # Mode valeurs sans fichier : essayer d'obtenir la valeur calculée
-                        if hasattr(cell, 'value') and isinstance(cell.value, str) and cell.value.startswith('='):
-                            # C'est une formule, mais on ne peut pas obtenir la valeur calculée
-                            # Afficher [Formula] ou la formule elle-même
-                            row_data.append(f"[{cell.value}]")
-                        else:
-                            row_data.append(cell.value)
+                    row_data.append(cell.value)
                 data.append(row_data)
         
         if data:
@@ -244,7 +255,10 @@ class ExcelHandler:
             workbook.save(tmp.name)
             self.current_path = tmp.name
             self.temp_files.append(tmp.name)
-    
+
+        self.values_workbook = None
+        logger.info("Cache des valeurs invalidé après modification")
+        
     def get_sheet_info(self, workbook: openpyxl.Workbook) -> Dict[str, Any]:
         """Récupère les informations sur les feuilles du workbook"""
         info = {

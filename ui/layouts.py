@@ -556,29 +556,48 @@ class MainLayout:
                             use_container_width=True):
                         if st.session_state.get('excel_workbook'):
                             with st.spinner("Actualisation et nettoyage en cours..."):
-                                # Mettre à jour et nettoyer
-                                updated_json, modifications = self.services['json_helper'].update_tags_from_excel(
-                                    st.session_state.json_data,
-                                    st.session_state.excel_workbook
+                                sheets_needed = self.services['json_helper'].get_source_cells_summary(
+                                    st.session_state.json_data
                                 )
-                                st.session_state.json_data = updated_json
+
+                                # Mettre à jour et nettoyer
+                                all_modifications = []
+                                for sheet_name in sheets_needed:
+                                    try:
+                                        # Créer le DataFrame avec les VALEURS
+                                        df = self.services['excel_handler'].sheet_to_dataframe(
+                                            st.session_state.excel_workbook,
+                                            sheet_name,
+                                            show_formulas=False  # Important : obtenir les valeurs
+                                        )
+                                        
+                                        # Mettre à jour les tags de cette feuille
+                                        st.session_state.json_data, modifications = \
+                                            self.services['json_helper'].update_tags_from_dataframe(
+                                                st.session_state.json_data,
+                                                df,
+                                                sheet_name
+                                            )
+                                        
+                                        all_modifications.extend(modifications)
+                                        
+                                    except Exception as e:
+                                        logger.warning(f"Erreur actualisation feuille {sheet_name}: {e}")
                                 
-                                # Compter les modifications réelles (sans le cleanup)
-                                actual_modifications = [m for m in modifications if m.get('action') != 'cleanup']
-                                cleanup_info = next((m for m in modifications if m.get('action') == 'cleanup'), None)
+                            # Dédupliquer après toutes les mises à jour
+                            st.session_state.json_data, removed_count = self.services['json_helper'].deduplicate_tags(st.session_state.json_data)
+                            
+                            # Afficher les résultats
+                            if all_modifications or removed_count > 0:
+                                success_msg = []
+                                if all_modifications:
+                                    success_msg.append(f"✅ {len(all_modifications)} tags enrichis")
+                                if removed_count > 0:
+                                    success_msg.append(f"🧹 {removed_count} doublons supprimés")
                                 
-                                # Afficher les résultats
-                                if actual_modifications or cleanup_info:
-                                    success_msg = []
-                                    if actual_modifications:
-                                        success_msg.append(f"✅ {len(actual_modifications)} tags enrichis")
-                                    if cleanup_info:
-                                        success_msg.append(f"🧹 {cleanup_info['removed_duplicates']} doublons supprimés")
-                                    
-                                    st.success(" | ".join(success_msg))
-                                else:
-                                    st.info("ℹ️ Aucun nouveau label trouvé et aucun doublon à nettoyer")
-                                    st.session_state.show_modification_details = False
+                                st.success(" | ".join(success_msg))
+                            else:
+                                st.info("ℹ️ Aucun nouveau label trouvé")
                         else:
                             st.warning("⚠️ Chargez d'abord un fichier Excel")
 

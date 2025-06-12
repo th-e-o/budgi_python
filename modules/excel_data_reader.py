@@ -14,6 +14,5 @@ class ExcelDataReader:
     async def read_and_structure_data(self, workbook, json_config) -> Dict[str, Any]:
         """Lit les données Excel et crée une structure compréhensible"""
 
-        structured_data = {
-            
+
         }
