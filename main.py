@@ -3,6 +3,7 @@ import logging
 import json
 import os
 import tempfile
+from pathlib import Path
 
 from fastapi import FastAPI, UploadFile, File, WebSocket, WebSocketDisconnect, HTTPException, Form
 from fastapi.middleware.cors import CORSMiddleware
@@ -20,6 +21,10 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 app = FastAPI()
+
+BASE_DIR = Path(__file__).resolve().parent
+FRONTEND_DIR = BASE_DIR / "frontend" / "dist"
+ASSETS_DIR = FRONTEND_DIR / "assets"
 
 app.add_middleware(
     CORSMiddleware,
