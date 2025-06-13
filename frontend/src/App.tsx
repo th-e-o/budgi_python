@@ -30,7 +30,7 @@ function App() {
 
     const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
     const wsHost = window.location.host;
-    const wsUrl = `${wsProtocol}//${wsHost}/ws`;
+    const wsUrl = `${wsProtocol}//${wsHost}${window.location.pathname}ws`;
     console.log(`Connecting WebSocket to: ${wsUrl}`);
     ws.current = new WebSocket(wsUrl);
 
