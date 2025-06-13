@@ -40,9 +40,17 @@ function App() {
     };
 
     // Handle incoming messages from the WebSocket
-    ws.current.onmessage = (event) => {
+     ws.current.onmessage = async (event) => {
       try {
-        const message = JSON.parse(event.data);
+        let jsonString;
+        if (event.data instanceof Blob) {
+          jsonString = await event.data.text();
+        } else {
+          jsonString = event.data;
+        }
+
+        // Now, parse the guaranteed-to-be-a-string data
+        const message = JSON.parse(jsonString);
         console.log('Message from server:', message);
 
         switch (message.type) {
