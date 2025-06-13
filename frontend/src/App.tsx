@@ -28,7 +28,11 @@ function App() {
       }
     };
 
-    ws.current = new WebSocket('ws://localhost:8000/ws');
+    const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+    const wsHost = window.location.host;
+    const wsUrl = `${wsProtocol}//${wsHost}/ws`;
+    console.log(`Connecting WebSocket to: ${wsUrl}`);
+    ws.current = new WebSocket(wsUrl);
 
     ws.current.onopen = () => {
       console.log('WebSocket connected');
@@ -100,7 +104,7 @@ function App() {
     formData.append('file', file);
 
     try {
-      const response = await axios.post<IWorkbookData>('http://localhost:8000/upload', formData, {
+      const response = await axios.post<IWorkbookData>('/upload', formData, {
         headers: { 'Content-Type': 'multipart/form-data' },
       });
 
@@ -120,11 +124,9 @@ function App() {
     }]);
 
     try {
-      await axios.post('http://localhost:8000/bpss/process', formData, {
+        await axios.post('/bpss/process', formData, { // <-- NEW
         headers: { 'Content-Type': 'multipart/form-data' },
       });
-      // The success message will be sent via WebSocket from the backend,
-      // so we don't need to add another one here.
     } catch (error: any) {
       console.error('Error processing BPSS files:', error);
       const errorMessage = error.response?.data?.detail || 'An unknown error occurred.';
