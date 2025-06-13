@@ -221,4 +221,5 @@ async def websocket_endpoint(websocket: WebSocket):
         logger.info("Client disconnected.")
 
 
+app.mount("/assets", StaticFiles(directory="frontend/dist/assets"), name="assets")
 app.mount("/", StaticFiles(directory="frontend/dist", html=True), name="static")
