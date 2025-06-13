@@ -1,0 +1,76 @@
+/* App.css */
+.app-container {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+}
+
+.app-header {
+  background-color: #ffffff;
+  padding: 1rem 2rem;
+  border-bottom: 1px solid #e0e0e0;
+  box-shadow: 0 2px 4px rgba(0,0,0,0.05);
+}
+
+.app-header h1 {
+  margin: 0;
+  font-size: 1.5rem;
+  color: #0055A4; /* BudgiBot blue */
+}
+
+.app-header p {
+  margin: 0.25rem 0 0;
+  color: #666;
+}
+
+.main-content {
+  flex-grow: 1;
+  padding: 1.5rem;
+  overflow: hidden;
+  background-color: #f4f7f9;
+}
+
+.layout-grid {
+  display: grid;
+  /* Adjust the grid to give more space to the chat if needed */
+  grid-template-columns: minmax(400px, 1fr) 2fr;
+  gap: 1.5rem;
+  height: 100%;
+}
+
+.panel {
+  background-color: #ffffff;
+  border-radius: 8px;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.07);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+/* MODIFIED: excel-panel doesn't need as much padding now */
+.excel-panel {
+  padding: 1rem;
+}
+
+.excel-panel h2 {
+    margin-top: 0;
+    margin-bottom: 1rem;
+    padding: 0 0.5rem 0.75rem;
+    font-size: 1.2rem;
+    border-bottom: 1px solid #eee;
+}
+
+.placeholder {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  border: 2px dashed #ccc;
+  border-radius: 8px;
+  color: #888;
+  font-size: 1.2rem;
+  text-align: center;
+  background-color: #f8f9fa;
+  padding: 2rem;
+}

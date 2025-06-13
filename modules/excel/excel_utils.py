@@ -126,7 +126,7 @@ class ExcelUtils:
                 base_fill_color = 'FFFFFF'
 
         font_color_hex = '000000'  # Default to black if no color is set
-        if font.color is not None:
+        if font and font.color is not None:
             if font.color.type == 'rgb':
                 font_color_hex = font.color.rgb[-6:]
             elif font.color.type == 'theme':

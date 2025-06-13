@@ -50,7 +50,7 @@ const UniverStreamlitComponent: React.FC<ComponentProps> = (props) => {
 			// Create new workbook with the complete IWorkbookData structure
 			const definedNames = workbookData.definedNames;
 			delete workbookData.definedNames
-			var newWorkbook = univerInstanceRef.current.createWorkbook(workbookData)
+			let newWorkbook = univerInstanceRef.current.createWorkbook(workbookData)
 
 			if (!newWorkbook) {
 				console.error("Failed to create workbook from data")
