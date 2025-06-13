@@ -112,7 +112,7 @@ function App() {
     formData.append('file', file);
 
     try {
-      const response = await axios.post<IWorkbookData>('/upload', formData, {
+      const response = await axios.post<IWorkbookData>('upload', formData, {
         headers: { 'Content-Type': 'multipart/form-data' },
       });
 
@@ -132,7 +132,7 @@ function App() {
     }]);
 
     try {
-        await axios.post('/bpss/process', formData, { // <-- NEW
+        await axios.post('bpss/process', formData, { // <-- NEW
         headers: { 'Content-Type': 'multipart/form-data' },
       });
     } catch (error: any) {

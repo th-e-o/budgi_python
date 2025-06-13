@@ -81,7 +81,6 @@ je peux vous aider à :\n
 """
 
 
-# --- Upload Endpoint (MODIFIED) ---
 @app.post("/upload")
 async def upload_excel(file: UploadFile = File(...)):
     logger.info(f"Received file for upload: {file.filename}")
