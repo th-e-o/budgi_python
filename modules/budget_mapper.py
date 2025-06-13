@@ -1,4 +1,3 @@
-# modules/budget_mapper.py
 import pandas as pd
 from typing import List, Dict, Optional, Tuple, Set
 import logging
@@ -13,7 +12,6 @@ logger = logging.getLogger(__name__)
 
 class BudgetMapper:
     """Module optimisé pour mapper les entrées budgétaires aux cellules Excel"""
-    
     def __init__(self, llm_client):
         self.llm_client = llm_client
         self.mapping_cache = {}

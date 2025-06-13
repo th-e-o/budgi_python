@@ -1,7 +1,10 @@
 from __future__ import annotations
 from typing import Any, Optional
 
+from openpyxl.workbook import Workbook
 from openpyxl.worksheet.worksheet import Worksheet
+
+from core.ExcelToUniverConverterOpt import ExcelToUniverConverterOpt
 
 
 class ExcelUpdateBuilder:
@@ -59,5 +62,24 @@ class ExcelUpdateBuilder:
         self.updates.append({
             "type": "create_sheet",
             "sheet_name": sheet_name
+        })
+        return self
+
+    def import_sheet_from_workbook(self, workbook: Workbook, sheet_name: str, new_sheet_name: Optional[str] = None) -> ExcelUpdateBuilder:
+        """
+        Import a sheet from another workbook.
+        :param workbook: The source workbook to import the sheet from.
+        :param sheet_name: Name of the target sheet to create.
+        :param new_sheet_name: Optional name for the new sheet. If not provided, uses the original sheet name.
+        """
+        if new_sheet_name is None:
+            new_sheet_name = sheet_name
+
+        sheet = workbook[sheet_name]
+        converter = ExcelToUniverConverterOpt(workbook)
+        self.updates.append({
+            "type": "create_sheet",
+            "sheet_name": new_sheet_name,
+            "sheet_data": converter._convert_sheet(sheet, converter._generate_sheet_id(new_sheet_name))
         })
         return self

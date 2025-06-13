@@ -7,7 +7,7 @@ from typing import Dict, Any, List, Optional
 
 from openpyxl import Workbook
 from openpyxl.cell import Cell
-from openpyxl.styles import Font, PatternFill, Border, Alignment
+from openpyxl.styles import Border
 from openpyxl.utils import get_column_letter, column_index_from_string
 from openpyxl.utils.cell import coordinate_from_string
 from openpyxl.worksheet.worksheet import Worksheet
@@ -28,12 +28,10 @@ class ExcelToUniverConverterOpt:
         # The final Univer style definitions
         self.style_registry: Dict[str, Dict[str, Any]] = {}
 
-        # A cache to avoid re-calculating styles.
-        # Maps a hash of a style definition to its final Univer ID (e.g., 's1', 's2')
+        # A cache to avoid re-calculating styles
         self.style_hash_to_id: Dict[str, str] = {}
 
-        # The main lookup cache.
-        # Maps an openpyxl cell.style_id (int) to its final Univer ID (str).
+        # The main lookup cache
         self.style_id_lookup: Dict[int, Optional[str]] = {}
         self.style_counter = 0
 
@@ -68,35 +66,25 @@ class ExcelToUniverConverterOpt:
         The core of the optimization. Gets a cached Univer style ID for a cell's
         style_id, or computes and caches it if seen for the first time.
         """
-        # 1. Check if we have already processed this exact openpyxl style_id
         if cell.style_id in self.style_id_lookup:
             return self.style_id_lookup[cell.style_id]
 
-        # 2. If not, this is the first time we see this style.
-        #    We perform the robust (but expensive) style extraction.
-        #    This uses the cell's proxy properties, which correctly handle inheritance.
         style_data = self._extract_style_from_cell(cell)
 
-        # 3. If the style is empty (default), cache and return None
         if not style_data:
             self.style_id_lookup[cell.style_id] = None
             return None
 
-        # 4. De-duplicate the final style definition. Even if two different
-        #    openpyxl style_ids result in the same final appearance, we should
-        #    use a single Univer style for them.
         style_hash = hashlib.md5(json.dumps(style_data, sort_keys=True).encode()).hexdigest()
 
         if style_hash in self.style_hash_to_id:
             univer_style_id = self.style_hash_to_id[style_hash]
         else:
-            # Create a new entry in our Univer style registry
             univer_style_id = f"s{self.style_counter}"
             self.style_counter += 1
             self.style_registry[univer_style_id] = style_data
             self.style_hash_to_id[style_hash] = univer_style_id
 
-        # 5. Cache the result for the original openpyxl style_id and return it
         self.style_id_lookup[cell.style_id] = univer_style_id
         return univer_style_id
 
@@ -106,7 +94,6 @@ class ExcelToUniverConverterOpt:
         This is the logic from your original, working-but-slow version.
         """
         style = {}
-        # Using cell.font, cell.fill etc. correctly triggers openpyxl's style resolution
         font = cell.font
         fill = cell.fill
         border = cell.border
@@ -171,7 +158,6 @@ class ExcelToUniverConverterOpt:
 
         return cell_data if cell_data else None
 
-    # <editor-fold desc="Remaining helper and boilerplate methods">
     def _convert_sheet(self, sheet: Worksheet, sheet_id: str) -> Dict[str, Any]:
         max_row, max_col = ExcelUtils.get_data_only_range(sheet)
         return {
@@ -267,7 +253,6 @@ class ExcelToUniverConverterOpt:
         return border_data if border_data else None
 
     def _get_row_data(self, sheet: Worksheet, max_row: int) -> Dict[str, Dict[str, Any]]:
-        # ... implementation is correct ...
         row_data = {}
         for r_num in range(1, max_row + 1):
             if r_num in sheet.row_dimensions:
@@ -279,7 +264,6 @@ class ExcelToUniverConverterOpt:
         return row_data
 
     def _get_column_data(self, sheet: Worksheet, max_col: int) -> Dict[str, Dict[str, Any]]:
-        # ... implementation is correct ...
         column_data = {}
         for c_num in range(1, max_col + 1):
             col_letter = get_column_letter(c_num)
@@ -292,4 +276,3 @@ class ExcelToUniverConverterOpt:
                 if col_dim.hidden: col_info["hd"] = 1
                 if col_info: column_data[str(c_num - 1)] = col_info
         return column_data
-    # </editor-fold>
