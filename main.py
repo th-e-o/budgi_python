@@ -191,7 +191,7 @@ async def process_bpss_files(
 async def websocket_endpoint(websocket: WebSocket):
     await manager.connect(websocket)
     await manager.send_to(websocket, "chat_message", {
-        "role": "assistant",
+        "role": "assistaent",
         "content": WELCOME_MESSAGE,
         "timestamp": datetime.datetime.utcnow().isoformat()
     })
