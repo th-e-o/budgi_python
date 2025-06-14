@@ -1,6 +1,6 @@
 import logging
 from datetime import datetime
-from typing import Dict
+from typing import Dict, List
 
 from backend.core.communication.ConnectionManager import ConnectionManager
 from backend.core.excel_handler.excel_handler import UpdatedExcelHandler
@@ -26,9 +26,8 @@ class ExcelSyncManager:
         """Creates a new, clean builder for defining a transaction."""
         return ExcelUpdateBuilder(self)
 
-    async def commit_updates(self, builder: ExcelUpdateBuilder, validate: bool):
+    async def commit_updates(self, operations: List[Dict], validate: bool):
         """Commits the operations, handling validation and targeted communication."""
-        operations = builder.get_operations()
         if not operations:
             return
 

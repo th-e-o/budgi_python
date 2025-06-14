@@ -157,21 +157,9 @@ function App() {
             timestamp: new Date().toISOString(),
         }]);
 
-        try {
-            const response = await axios.post<IWorkbookData>('/bpss/process', formData);
-            dispatch({ type: 'REPLACE_WORKBOOK', wb: response.data });
-        } catch (error: any) {
-            console.error('Error processing BPSS files:', error);
-            const errorMessage = error.response?.data?.detail || 'An unknown error occurred.';
-            setMessages(prev => [...prev, {
-                role: 'assistant',
-                content: `❌ Erreur lors du traitement BPSS : ${errorMessage}`,
-                timestamp: new Date().toISOString(),
-                error: true,
-            }]);
-        } finally {
-            setIsBpssProcessing(false);
-        }
+        await axios.post<IWorkbookData>('/bpss/process', formData);
+
+        setIsBpssProcessing(false);
     }, [dispatch, sessionId]);
 
     // --- Chat Message Sender ---

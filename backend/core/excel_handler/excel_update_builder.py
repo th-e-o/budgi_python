@@ -9,6 +9,7 @@ from openpyxl.utils.dataframe import dataframe_to_rows
 from openpyxl.workbook import Workbook
 import openpyxl
 
+from backend.core.excel_handler.excel_update_compiler import ExcelUpdateCompiler
 from backend.core.excel_handler.operation_types import BackendOperationType, FrontendOperationType
 from core.ExcelToUniverConverterOpt import ExcelToUniverConverterOpt
 
@@ -37,6 +38,12 @@ class ExcelUpdateBuilder:
         self.operations.append(op)
 
     def create_sheet(self, sheet_name: str) -> ExcelUpdateBuilder:
+        """
+        Creates a new sheet in the workbook with the specified name.
+        If a sheet with that name already exists, this operation will be ignored.
+        :param sheet_name: The name of the new sheet to create.
+        :return: ``ExcelUpdateBuilder`` for fluent chaining.
+        """
         self._add_operation(
             frontend_op=FrontendOperationType.CREATE_SHEET,
             backend_op=BackendOperationType.CREATE_SHEET,
@@ -46,6 +53,12 @@ class ExcelUpdateBuilder:
         return self
 
     def delete_sheet(self, sheet_name: str) -> ExcelUpdateBuilder:
+        """
+        Deletes a sheet from the workbook.
+        If the sheet does not exist, this operation will be ignored.
+        :param sheet_name: The name of the sheet to delete.
+        :return: ``ExcelUpdateBuilder`` for fluent chaining.
+        """
         self._add_operation(
             frontend_op=FrontendOperationType.DELETE_SHEET,
             backend_op=BackendOperationType.DELETE_SHEET,
@@ -117,9 +130,20 @@ class ExcelUpdateBuilder:
         )
         return self
 
-    async def commit(self, require_validation: bool = False):
-        """Commits the defined operations to the synchronization manager."""
+    async def commit(self, require_validation: bool = False, use_compiler: bool = True):
+        """
+        Commits the defined operations, optionally compiling them for performance
+        before sending them to the synchronization manager.
+        :param require_validation: If True, operations will be sent for validation before applying.
+        :param use_compiler: If True, operations will be compiled for performance (heavily modified sheets will be recreated).
+        """
         if not self.operations:
             return
 
-        await self.synchronization_manager.commit_updates(self, validate=require_validation)
+        final_operations = self.operations
+        if use_compiler:
+            handler = self.synchronization_manager.handler
+            compiler = ExcelUpdateCompiler(handler)
+            final_operations = compiler.compile(self.operations)
+
+        await self.synchronization_manager.commit_updates(final_operations, validate=require_validation)

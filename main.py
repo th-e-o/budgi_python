@@ -7,7 +7,6 @@ from pathlib import Path
 from fastapi import FastAPI, UploadFile, File, WebSocket, WebSocketDisconnect, HTTPException, Form, Cookie, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from typing import List, Dict, Any, Annotated
-from pydantic import BaseModel
 from fastapi.staticfiles import StaticFiles
 import datetime
 
@@ -15,7 +14,7 @@ from backend.core.communication.ConnectionManager import ConnectionManager
 from backend.core.communication.excel_synchronization_manager import ExcelSyncManager
 from backend.core.excel_handler.excel_handler import UpdatedExcelHandler
 from core.ExcelToUniverConverterOpt import ExcelToUniverConverterOpt
-from modules.bpss_tool import BPSSTool
+from backend.modules.bpss_tool import BPSSTool
 
 # --- Basic Setup ---
 logging.basicConfig(level=logging.INFO)
@@ -124,27 +123,21 @@ async def process_bpss_files(
                 temp_paths[key] = temp_path
                 logger.info(f"Saved temp file: {temp_path}")
 
-            # Get the current workbook from the handler to be modified
             target_workbook = sync_manager.handler.workbook
+            updates = sync_manager.new_update_builder()
 
-            # Process the files
-            result_wb = bpss_tool.process_files(
+            bpss_tool.process_files(
                 ppes_path=temp_paths['ppes'],
                 dpp18_path=temp_paths['dpp18'],
                 bud45_path=temp_paths['bud45'],
                 year=year,
                 ministry_code=ministry,
                 program_code=program,
-                target_workbook=target_workbook
+                target_workbook=target_workbook,
+                builder=updates
             )
 
-            # Replace the workbook in the handler with the newly modified one
-            sync_manager.handler._user_workbook = result_wb
-
-            # Convert the *new* workbook state to Univer JSON
-            converter = ExcelToUniverConverterOpt(result_wb)
-            updated_univer_data = converter.convert()
-
+            await updates.commit(require_validation=False, use_compiler=False)
             logger.info("BPSS processing complete. Broadcasting workbook_update.")
 
             # Send a success message to the chat
@@ -153,8 +146,6 @@ async def process_bpss_files(
                 "content": f"✅ Traitement BPSS terminé ! Le classeur a été mis à jour.",
                 "timestamp": datetime.datetime.utcnow().isoformat()
             })
-
-            return updated_univer_data
 
     except Exception as e:
         logger.error(f"Error during BPSS processing: {e}", exc_info=True)
@@ -219,9 +210,10 @@ async def websocket_endpoint(websocket: WebSocket):
             except json.JSONDecodeError:
                 logger.warning(f"Received invalid JSON via WebSocket: {data}")
             except KeyboardInterrupt:
-                raise
+                break
             except Exception as e:
-                 logger.error(f"Error processing WebSocket message: {e}", exc_info=True)
+                logger.error(f"Error processing WebSocket message: {e}", exc_info=True)
+                break
     except WebSocketDisconnect:
         conn_manager.disconnect(client_id)
         if session_id in SESSION_SYNC_MANAGERS:
@@ -237,5 +229,5 @@ async def websocket_endpoint(websocket: WebSocket):
             del SESSION_HANDLERS[session_id]
 
 
-app.mount("/assets", StaticFiles(directory="frontend/dist/assets"), name="assets")
-app.mount("/", StaticFiles(directory="frontend/dist", html=True), name="static")
+# app.mount("/assets", StaticFiles(directory="frontend/dist/assets"), name="assets")
+# app.mount("/", StaticFiles(directory="frontend/dist", html=True), name="static")
