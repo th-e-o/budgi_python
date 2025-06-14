@@ -74,3 +74,27 @@
   background-color: #f8f9fa;
   padding: 2rem;
 }
+
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.35);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 999;
+}
+.modal-window {
+  background: #fff;
+  padding: 1.5rem 2rem;
+  border-radius: 8px;
+  max-width: 400px;
+  width: 90%;
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.25);
+}
+.modal-window button {
+  cursor: pointer;
+  border: none;
+  background: transparent;
+  font-size: 1.1rem;
+}

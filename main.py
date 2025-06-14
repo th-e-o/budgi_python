@@ -1,17 +1,18 @@
-# main.py
 import logging
 import json
 import os
 import tempfile
 from pathlib import Path
 
-from fastapi import FastAPI, UploadFile, File, WebSocket, WebSocketDisconnect, HTTPException, Form
+from fastapi import FastAPI, UploadFile, File, WebSocket, WebSocketDisconnect, HTTPException, Form, Cookie, Depends
 from fastapi.middleware.cors import CORSMiddleware
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Annotated
 from pydantic import BaseModel
 from fastapi.staticfiles import StaticFiles
 import datetime
 
+from backend.core.communication.ConnectionManager import ConnectionManager
+from backend.core.communication.excel_synchronization_manager import ExcelSyncManager
 from backend.core.excel_handler.excel_handler import UpdatedExcelHandler
 from core.ExcelToUniverConverterOpt import ExcelToUniverConverterOpt
 from modules.bpss_tool import BPSSTool
@@ -34,43 +35,17 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-excel_handler = UpdatedExcelHandler()
+conn_manager = ConnectionManager()
 bpss_tool = BPSSTool()
 
-# --- WebSocket Message Models ---
-class WebSocketMessage(BaseModel):
-    type: str
-    payload: Dict[str, Any]
+SESSION_HANDLERS: Dict[str, UpdatedExcelHandler] = {}
+SESSION_SYNC_MANAGERS: Dict[str, ExcelSyncManager] = {}
 
-
-# --- Connection Manager ---
-class ConnectionManager:
-    def __init__(self):
-        self.active_connections: List[WebSocket] = []
-
-    async def connect(self, websocket: WebSocket):
-        await websocket.accept()
-        self.active_connections.append(websocket)
-        logger.info(f"New WebSocket connection: {websocket.client.host}")
-
-    def disconnect(self, websocket: WebSocket):
-        self.active_connections.remove(websocket)
-        logger.info(f"WebSocket connection closed: {websocket.client.host}")
-
-    async def send_to(self, websocket: WebSocket, message_type: str, payload: Dict):
-        """Sends a structured message to a specific websocket."""
-        ws_message = WebSocketMessage(type=message_type, payload=payload)
-        await websocket.send_text(ws_message.model_dump_json())
-
-    async def broadcast(self, message_type: str, payload: Dict):
-        """Broadcasts a structured message to all connected clients."""
-        ws_message = WebSocketMessage(type=message_type, payload=payload)
-        message_json = ws_message.model_dump_json()
-        for connection in self.active_connections:
-            await connection.send_text(message_json)
-
-
-manager = ConnectionManager()
+async def get_session_manager(session_id: Annotated[str | None, Cookie()] = None) -> ExcelSyncManager:
+    """A FastAPI dependency that retrieves the user's session manager via cookie."""
+    if session_id is None or session_id not in SESSION_SYNC_MANAGERS:
+        raise HTTPException(status_code=401, detail="Invalid or expired session. Please refresh.")
+    return SESSION_SYNC_MANAGERS[session_id]
 
 # --- Welcome Message from Streamlit Legacy ---
 WELCOME_MESSAGE = """Bonjour,\n
@@ -82,42 +57,51 @@ je peux vous aider à :\n
 
 
 @app.post("/upload")
-async def upload_excel(file: UploadFile = File(...)):
+async def upload_excel(file: UploadFile = File(...), excel_sync_manager: ExcelSyncManager = Depends(get_session_manager)):
     logger.info(f"Received file for upload: {file.filename}")
     try:
         contents = await file.read()
 
-        excel_handler.load_workbook_from_bytes(contents)
+        excel_sync_manager.handler.load_workbook_from_bytes(contents)
 
-        if not excel_handler.workbook:
-            raise HTTPException(status_code=500, detail="Failed to load workbook in handler.")
-
-        sheet_count = len(excel_handler.workbook.sheetnames)
-        logger.info(f"Workbook '{file.filename}' loaded with {sheet_count} sheets.")
-
-        converter = ExcelToUniverConverterOpt(excel_handler.workbook)
+        converter = ExcelToUniverConverterOpt(excel_sync_manager.handler.workbook)
         univer_data = converter.convert()
         logger.info("Workbook converted to Univer format for initial load.")
 
-        await manager.broadcast("chat_message", {
+        await conn_manager.send_to(excel_sync_manager.client_id, "chat_message", {
             "role": "assistant",
-            "content": f"✅ Fichier '{file.filename}' chargé. Il contient {sheet_count} feuilles.",
+            "content": f"✅ Fichier '{file.filename}' chargé dans votre session.",
             "timestamp": datetime.datetime.utcnow().isoformat()
         })
         return univer_data
 
     except Exception as e:
-        logger.error(f"Error processing upload: {e}", exc_info=True)
-        await manager.broadcast("chat_message", {
-            "role": "assistant",
-            "content": f"❌ Erreur lors du traitement du fichier '{file.filename}': {str(e)}",
-            "error": True, "timestamp": datetime.datetime.utcnow().isoformat()
-        })
-        raise HTTPException(status_code=500, detail=f"Failed to process file: {str(e)}")
+        logger.error(f"Error in upload for session {excel_sync_manager.client_id}: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
 
+@app.post("/perform_small_update")
+async def perform_small_update(
+        sync_manager: ExcelSyncManager = Depends(get_session_manager)
+):
+    logger.info(f"Received small update request for session {sync_manager.client_id}")
+
+    if not sync_manager.handler.has_workbook():
+        raise HTTPException(status_code=400, detail="No main workbook loaded. Please upload an Excel file first.")
+
+    try:
+        # Create a new update builder for the small update
+        update_builder = sync_manager.new_update_builder()
+        update_builder.update_cell_value("Accueil", 2, 1, "25")
+        update_builder.update_cell_value("Accueil", 3, 1, "26")
+        await update_builder.commit(require_validation=True)
+
+    except Exception as e:
+        logger.error(f"Error applying small update: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Failed to apply small update: {str(e)}")
 
 @app.post("/bpss/process")
 async def process_bpss_files(
+        sync_manager: ExcelSyncManager = Depends(get_session_manager),
         ppes: UploadFile = File(...),
         dpp18: UploadFile = File(...),
         bud45: UploadFile = File(...),
@@ -127,7 +111,7 @@ async def process_bpss_files(
 ):
     logger.info("Received request to process BPSS files.")
 
-    if not excel_handler.has_workbook():
+    if not sync_manager.handler.has_workbook():
         raise HTTPException(status_code=400, detail="No main workbook loaded. Please upload an Excel file first.")
 
     try:
@@ -141,7 +125,7 @@ async def process_bpss_files(
                 logger.info(f"Saved temp file: {temp_path}")
 
             # Get the current workbook from the handler to be modified
-            target_workbook = excel_handler.workbook
+            target_workbook = sync_manager.handler.workbook
 
             # Process the files
             result_wb = bpss_tool.process_files(
@@ -155,29 +139,26 @@ async def process_bpss_files(
             )
 
             # Replace the workbook in the handler with the newly modified one
-            excel_handler._user_workbook = result_wb
+            sync_manager.handler._user_workbook = result_wb
 
             # Convert the *new* workbook state to Univer JSON
-            converter = ExcelToUniverConverterOpt(excel_handler.workbook)
+            converter = ExcelToUniverConverterOpt(result_wb)
             updated_univer_data = converter.convert()
 
             logger.info("BPSS processing complete. Broadcasting workbook_update.")
 
-            # Broadcast the full updated workbook data to all clients
-            await manager.broadcast('workbook_update', updated_univer_data)
-
             # Send a success message to the chat
-            await manager.broadcast("chat_message", {
+            await conn_manager.send_to(sync_manager.client_id, "chat_message", {
                 "role": "assistant",
                 "content": f"✅ Traitement BPSS terminé ! Le classeur a été mis à jour.",
                 "timestamp": datetime.datetime.utcnow().isoformat()
             })
 
-            return {"message": "BPSS processing successful. Update sent via WebSocket."}
+            return updated_univer_data
 
     except Exception as e:
         logger.error(f"Error during BPSS processing: {e}", exc_info=True)
-        await manager.broadcast("chat_message", {
+        await conn_manager.send_to(sync_manager.client_id, "chat_message", {
             "role": "assistant",
             "content": f"❌ Erreur lors du traitement BPSS : {str(e)}",
             "error": True, "timestamp": datetime.datetime.utcnow().isoformat()
@@ -185,44 +166,75 @@ async def process_bpss_files(
         raise HTTPException(status_code=500, detail=f"BPSS processing failed: {str(e)}")
 
 
-# --- WebSocket Endpoint (MODIFIED) ---
+# --- WebSocket Endpoint ---
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):
-    await manager.connect(websocket)
-    await manager.send_to(websocket, "chat_message", {
-        "role": "assistant",
-        "content": WELCOME_MESSAGE,
-        "timestamp": datetime.datetime.utcnow().isoformat()
-    })
+    session_id, client_id = await conn_manager.connect(websocket)
+
+    session_handler = UpdatedExcelHandler()
+    session_sync_manager = ExcelSyncManager(client_id, session_handler, conn_manager)
+    SESSION_HANDLERS[session_id] = session_handler
+    SESSION_SYNC_MANAGERS[session_id] = session_sync_manager
+
     try:
+        # Send to the client its new session_id
+        await conn_manager.send_to(client_id, "session_created", {"session_id": session_id})
+
+        await conn_manager.send_to(client_id, "chat_message", {
+            "role": "assistant",
+            "content": WELCOME_MESSAGE,
+            "timestamp": datetime.datetime.utcnow().isoformat()
+        })
+
         while True:
             data = await websocket.receive_text()
             try:
+                logger.info(f"Received data: {data}")
                 message = json.loads(data)
                 msg_type = message.get("type")
+                payload = message.get("payload", {})
 
                 if msg_type == 'cell_update':
-                    if excel_handler.has_workbook():
-                        excel_handler.apply_component_update(message['payload'])
-                    else:
-                        logger.warning("Received cell_update but no workbook is loaded.")
+                    await session_sync_manager.handle_cell_update(payload)
+
+                elif msg_type == 'validate_change':
+                    await session_sync_manager.handle_validate_op(payload.get('id'))
+
+                elif msg_type == 'reject_change':
+                    await session_sync_manager.handle_reject_op(payload.get('id'))
+
+                elif msg_type == 'validate_all_changes':
+                    await session_sync_manager.handle_validate_all()
+
+                elif msg_type == 'reject_all_changes':
+                    await session_sync_manager.handle_reject_all()
+
                 elif msg_type == 'user_message':
                      # Placeholder for future LLM interaction
-                    await manager.send_to(websocket, "chat_message", {
+                    await conn_manager.send_to(client_id, "chat_message", {
                         "role": "assistant",
                         "content": f"Received your message: '{message['payload']['content']}'. LLM logic is not yet connected.",
                         "timestamp": datetime.datetime.utcnow().isoformat()
                     })
-
             except json.JSONDecodeError:
                 logger.warning(f"Received invalid JSON via WebSocket: {data}")
+            except KeyboardInterrupt:
+                raise
             except Exception as e:
                  logger.error(f"Error processing WebSocket message: {e}", exc_info=True)
-
-
     except WebSocketDisconnect:
-        manager.disconnect(websocket)
+        conn_manager.disconnect(client_id)
+        if session_id in SESSION_SYNC_MANAGERS:
+            del SESSION_SYNC_MANAGERS[session_id]
+        if session_id in SESSION_HANDLERS:
+            del SESSION_HANDLERS[session_id]
         logger.info("Client disconnected.")
+    finally:
+        conn_manager.disconnect(client_id)
+        if session_id in SESSION_SYNC_MANAGERS:
+            del SESSION_SYNC_MANAGERS[session_id]
+        if session_id in SESSION_HANDLERS:
+            del SESSION_HANDLERS[session_id]
 
 
 app.mount("/assets", StaticFiles(directory="frontend/dist/assets"), name="assets")

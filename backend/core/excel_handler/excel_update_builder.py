@@ -1,85 +1,125 @@
 from __future__ import annotations
-from typing import Any, Optional
 
+import uuid
+from io import BytesIO
+from typing import Optional, Dict, Any
+
+import pandas as pd
+from openpyxl.utils.dataframe import dataframe_to_rows
 from openpyxl.workbook import Workbook
-from openpyxl.worksheet.worksheet import Worksheet
+import openpyxl
 
+from backend.core.excel_handler.operation_types import BackendOperationType, FrontendOperationType
 from core.ExcelToUniverConverterOpt import ExcelToUniverConverterOpt
 
 
 class ExcelUpdateBuilder:
-    """
-    A builder class for constructing updates to an Excel workbook.
-    This class allows building a sequence of operations to modify an Excel workbook.
-    """
-    def __init__(self):
-        self.updates = []
+    """A fluent API for defining a transaction of Excel operations."""
 
-    def create_sheet_if_not_exists(self, sheet_name: str) -> ExcelUpdateBuilder:
-        """
-        Create a new sheet if it does not already exist.
-        :param sheet_name: Name of the sheet to create.
-        """
-        self.updates.append({
-            "type": "create_sheet",
-            "sheet_name": sheet_name
-        })
+    def __init__(self, synchronization_manager):
+        self.operations = []
+        self.synchronization_manager = synchronization_manager
+
+    def get_operations(self):
+        return self.operations
+
+    def _add_operation(self, frontend_op: FrontendOperationType, backend_op: BackendOperationType, description: str,
+                       handler_payload: Dict, ui_payload: Optional[Dict] = None):
+        """Internal helper to add a fully-formed operation."""
+        op = {
+            "id": str(uuid.uuid4()),
+            "frontend_type": frontend_op,
+            "backend_type": backend_op,
+            "description": description,
+            "handler_payload": handler_payload,
+            "ui_payload": ui_payload or handler_payload
+        }
+        self.operations.append(op)
+
+    def create_sheet(self, sheet_name: str) -> ExcelUpdateBuilder:
+        self._add_operation(
+            frontend_op=FrontendOperationType.CREATE_SHEET,
+            backend_op=BackendOperationType.CREATE_SHEET,
+            description=f"Créer la feuille '{sheet_name}'",
+            handler_payload={"sheet_name": sheet_name}
+        )
         return self
 
     def delete_sheet(self, sheet_name: str) -> ExcelUpdateBuilder:
-        """
-        Delete a sheet by its name.
-        :param sheet_name: Name of the sheet to delete.
-        """
-        self.updates.append({
-            "type": "delete_sheet",
-            "sheet_name": sheet_name
-        })
+        self._add_operation(
+            frontend_op=FrontendOperationType.DELETE_SHEET,
+            backend_op=BackendOperationType.DELETE_SHEET,
+            description=f"Supprimer la feuille '{sheet_name}'",
+            handler_payload={"sheet_name": sheet_name}
+        )
         return self
 
-    def update_cell_value(self, sheet_name: str, row: int, column: int, value: Optional[str]) -> ExcelUpdateBuilder:
-        """
-        Update the value of a specific cell.
-        :param sheet_name: Name of the sheet where the cell is located.
-        :param row: Row index of the cell (0-indexed).
-        :param column: Column index of the cell (0-indexed).
-        :param value: New value to set in the cell.
-        """
-        self.updates.append({
-            "type": "update_cell",
-            "sheet_name": sheet_name,
-            "row": row,
-            "column": column,
-            "value": value
-        })
+    def update_cell_value(self, sheet_name: str, row: int, col: int, value: Any) -> ExcelUpdateBuilder:
+        """Updates only the value of a cell, preserving its style."""
+        self._add_operation(
+            frontend_op=FrontendOperationType.UPDATE_CELL,
+            backend_op=BackendOperationType.UPDATE_CELL_VALUE,
+            description=f"Modifier la cellule ({row + 1}, {col + 1}) dans '{sheet_name}'",
+            handler_payload={"sheet_name": sheet_name, "row": row, "column": col, "value": value},
+            ui_payload={"sheet": sheet_name, "row": row, "col": col, "value": {"v": value}}
+        )
         return self
 
-    def create_sheet(self, sheet_name: str) -> ExcelUpdateBuilder:
+    def import_from_dataframe(self, df: pd.DataFrame, sheet_name: str) -> ExcelUpdateBuilder:
         """
-        Create a new sheet with the specified name.
-        :param sheet_name: Name of the new sheet.
+        Replaces a sheet's content with a DataFrame.
+        This operation is low-fidelity on the UI side, but high-fidelity on the backend.
+        It won't preserve styles of existing cells on the frontend side.
         """
-        self.updates.append({
-            "type": "create_sheet",
-            "sheet_name": sheet_name
-        })
+        # To get UI payload, we must convert the df to a temporary worksheet
+        temp_wb = openpyxl.Workbook()
+        temp_ws = temp_wb.active
+        temp_ws.title = sheet_name
+        for r in dataframe_to_rows(df, index=False, header=True):
+            temp_ws.append(r)
+
+        converter = ExcelToUniverConverterOpt(temp_wb)
+        ui_sheet_data = converter.convert_sheet(temp_ws)
+
+        self.delete_sheet(sheet_name)
+        self._add_operation(
+            frontend_op=FrontendOperationType.REPLACE_SHEET,
+            backend_op=BackendOperationType.IMPORT_DATAFRAME,
+            description=f"Remplacer la feuille '{sheet_name}' avec de nouvelles données",
+            handler_payload={"sheet_name": sheet_name, "df": df.to_dict(orient='split'), "start_row": 1,
+                             "start_col": 1},
+            ui_payload=ui_sheet_data
+        )
         return self
 
-    def import_sheet_from_workbook(self, workbook: Workbook, sheet_name: str, new_sheet_name: Optional[str] = None) -> ExcelUpdateBuilder:
-        """
-        Import a sheet from another workbook.
-        :param workbook: The source workbook to import the sheet from.
-        :param sheet_name: Name of the target sheet to create.
-        :param new_sheet_name: Optional name for the new sheet. If not provided, uses the original sheet name.
-        """
-        if new_sheet_name is None:
-            new_sheet_name = sheet_name
+    def import_sheet_from_workbook(self, source_workbook: Workbook, sheet_name: str,
+                                   new_sheet_name: Optional[str] = None) -> ExcelUpdateBuilder:
+        """High-fidelity import of a sheet from another workbook."""
+        target_sheet_name = new_sheet_name or sheet_name
+        source_sheet = source_workbook[sheet_name]
 
-        sheet = workbook[sheet_name]
-        converter = ExcelToUniverConverterOpt(workbook)
-        self.updates.append({
-            "type": "create_sheet",
-            "sheet_name": new_sheet_name,
-            "sheet_data": converter._convert_sheet(sheet, converter._generate_sheet_id(new_sheet_name))
-        })
+        converter = ExcelToUniverConverterOpt(source_workbook)
+        ui_sheet_data = converter.convert_sheet(source_sheet)
+        ui_sheet_data['name'] = target_sheet_name
+
+        with BytesIO() as bio:
+            source_workbook.save(bio)
+            source_workbook_bytes = bio.getvalue()
+
+        self.delete_sheet(target_sheet_name)
+        self._add_operation(
+            frontend_op=FrontendOperationType.REPLACE_SHEET,
+            backend_op=BackendOperationType.REPLACE_SHEET_FROM_ANOTHER_WORKBOOK,
+            description=f"Importer la feuille '{sheet_name}' vers '{target_sheet_name}'",
+            handler_payload={"source_workbook_bytes": source_workbook_bytes, "sheet_name": sheet_name,
+                             "new_sheet_name": target_sheet_name},
+            ui_payload=ui_sheet_data
+        )
         return self
+
+    async def commit(self, require_validation: bool = False):
+        """Commits the defined operations to the synchronization manager."""
+        if not self.operations:
+            return
+
+        await self.synchronization_manager.commit_updates(self, validate=require_validation)

@@ -1,175 +1,154 @@
+import copy
+
 import openpyxl
 import pandas as pd
 from io import BytesIO
-from typing import Optional, Any, Dict
+from typing import Optional, Any, Dict, List
 import logging
-import tempfile
-import os
 
-from openpyxl.cell import MergedCell
-from openpyxl.utils import rows_from_range
-from openpyxl.utils.cell import coordinate_from_string, range_boundaries
 from openpyxl.utils.dataframe import dataframe_to_rows
+from openpyxl.worksheet.worksheet import Worksheet
 
-logger = logging.getLogger(__name__)
+from backend.core.excel_handler.operation_types import BackendOperationType
 
 
 class UpdatedExcelHandler:
     """
-    Manages Excel workbook operations, including the double workbook logic
-    for formula computation.
+    Manages the in-memory state of the Excel workbook.
+    Maintains an original and a user-modified version for non-destructive workflows.
+    Acts as the execution engine for backend operations.
     """
+    logger = logging.getLogger("UpdatedExcelHandler")
 
     def __init__(self):
         self._original_workbook: Optional[openpyxl.Workbook] = None
         self._user_workbook: Optional[openpyxl.Workbook] = None
-        self.temp_files = []
-
-    @property
-    def formula_workbook(self) -> Optional[openpyxl.Workbook]:
-        """The primary workbook with formulas."""
-        return self._original_workbook
 
     @property
     def workbook(self) -> Optional[openpyxl.Workbook]:
-        """The computed workbook with values. May be stale or None."""
+        """Returns the current, user-modified workbook."""
         return self._user_workbook
 
     def has_workbook(self) -> bool:
-        """Checks if a workbook is loaded."""
         return self._original_workbook is not None
 
-    def load_workbook_from_bytes(self, file_bytes: bytes) -> openpyxl.Workbook:
-        """Loads a workbook from bytes, resetting the current state."""
-        with tempfile.NamedTemporaryFile(delete=False, suffix='.xlsx') as tmp_file:
-            tmp_file.write(file_bytes)
-            temp_path = tmp_file.name
-        self.temp_files.append(temp_path)
+    def load_workbook_from_bytes(self, file_bytes: bytes):
+        """Loads a workbook, creating both the original and user-modifiable copies."""
+        with BytesIO(file_bytes) as stream:
+            self._original_workbook = openpyxl.load_workbook(stream, data_only=True, keep_vba=False)
+            stream.seek(0)
+            self._user_workbook = openpyxl.load_workbook(stream, data_only=True, keep_vba=False)
+        self.logger.info("New workbook loaded. Original and user copies created.")
 
-        wb = openpyxl.load_workbook(
-            temp_path, data_only=False, keep_vba=False, keep_links=False
-        )
+    def reset_to_original(self):
+        """Discards all user changes and restores the workbook to its original state."""
+        if not self._original_workbook:
+            self.logger.warning("Cannot reset, no original workbook loaded.")
+            return
 
-        self._original_workbook = openpyxl.load_workbook(
-            temp_path, data_only=False, keep_vba=False, keep_links=False
-        )
-        self._user_workbook = openpyxl.load_workbook(
-            temp_path, data_only=False, keep_vba=False, keep_links=False
-        )
+        workbook_as_bytes = self.save_workbook_to_bytes(self._original_workbook)
+        self._original_workbook = openpyxl.load_workbook(BytesIO(workbook_as_bytes), data_only=True, keep_vba=False)
+        self.logger.info("Workbook has been reset to its original state.")
 
-        logger.info("New workbook loaded.")
-        return wb
+    def apply_updates(self, operations: List[Dict[str, Any]]):
+        """Applies a list of backend operations to the user workbook."""
+        if not self.has_workbook():
+            raise ValueError("No workbook loaded to apply updates.")
+
+        for op in operations:
+            op_type = op.get('type')
+            payload = op.get('payload', {})
+            self.logger.info(f"Applying operation: {op_type.name} - {op.get('description')}")
+
+            try:
+                if op_type == BackendOperationType.CREATE_SHEET:
+                    if payload['sheet_name'] not in self._user_workbook.sheetnames:
+                        self._user_workbook.create_sheet(title=payload['sheet_name'])
+
+                elif op_type == BackendOperationType.DELETE_SHEET:
+                    if payload['sheet_name'] in self._user_workbook.sheetnames:
+                        del self._user_workbook[payload['sheet_name']]
+
+                elif op_type == BackendOperationType.UPDATE_CELL_VALUE:
+                    sheet = self._user_workbook[payload['sheet_name']]
+                    cell = sheet.cell(row=payload['row'] + 1, column=payload['column'] + 1)
+                    cell.value = payload.get('value')
+
+                elif op_type == BackendOperationType.IMPORT_DATAFRAME:
+                    df = pd.DataFrame(payload['df']['data'], columns=payload['df']['columns'])
+                    self._apply_dataframe_to_sheet(df, payload['sheet_name'], payload['start_row'],
+                                                   payload['start_col'])
+
+                elif op_type == BackendOperationType.REPLACE_SHEET_FROM_ANOTHER_WORKBOOK:
+                    source_wb = openpyxl.load_workbook(BytesIO(payload['source_workbook_bytes']))
+                    source_sheet = source_wb[payload['sheet_name']]
+                    self._copy_sheet_between_workbooks(source_sheet, payload['new_sheet_name'])
+
+            except Exception as e:
+                self.logger.error(f"Failed to apply operation {op_type.name}: {e}", exc_info=True)
+
+    def _apply_dataframe_to_sheet(self, df: pd.DataFrame, sheet_name: str, start_row: int, start_col: int):
+        """Helper to write a DataFrame, preserving styles of untouched cells."""
+        if sheet_name not in self._user_workbook.sheetnames:
+            self._user_workbook.create_sheet(title=sheet_name)
+        sheet = self._user_workbook[sheet_name]
+
+        for r_idx, row in enumerate(dataframe_to_rows(df, index=False, header=True), start_row):
+            for c_idx, value in enumerate(row, start_col):
+                sheet.cell(row=r_idx, column=c_idx, value=value)
+
+    def _copy_sheet_between_workbooks(self, source_sheet: Worksheet, new_sheet_name: str):
+        """Helper for high-fidelity sheet copy."""
+        if new_sheet_name in self._user_workbook.sheetnames:
+            del self._user_workbook[new_sheet_name]
+        target_sheet = self._user_workbook.create_sheet(title=new_sheet_name)
+
+        # Copy data and styles cell by cell
+        for row in source_sheet.iter_rows():
+            for cell in row:
+                new_cell = target_sheet.cell(row=cell.row, column=cell.column, value=cell.value)
+                if cell.has_style:
+                    new_cell.font = copy.copy(cell.font)
+                    new_cell.border = copy.copy(cell.border)
+                    new_cell.fill = copy.copy(cell.fill)
+                    new_cell.number_format = copy.copy(cell.number_format)
+                    new_cell.protection = copy.copy(cell.protection)
+                    new_cell.alignment = copy.copy(cell.alignment)
+
+        # Copy other sheet properties
+        for merged_range in source_sheet.merged_cells.ranges:
+            target_sheet.merge_cells(str(merged_range))
+        for key, dim in source_sheet.row_dimensions.items():
+            target_sheet.row_dimensions[key] = copy.copy(dim)
+        for key, dim in source_sheet.column_dimensions.items():
+            target_sheet.column_dimensions[key] = copy.copy(dim)
 
     def apply_component_update(self, update_data: Dict[str, Any]):
-        """
-        Applies a cell update received from the UniverJS frontend component.
-        The update format is: {"sheet": "SheetName", "range": "A1", "value": {row_idx: {col_idx: {v: value}}}, ...}
-        """
-        if not self.has_workbook():
-            logger.warning("No workbook loaded, cannot apply update.")
-            return
-
+        """Applies a single cell update from the UniverJS frontend."""
+        if not self.has_workbook(): return
         sheet_name = update_data.get('sheet')
         values = update_data.get('value')
-
-        if not sheet_name or not values or not isinstance(values, dict):
-            logger.warning(f"Invalid update data received: {update_data}")
-            return
-
-        if sheet_name not in self.formula_workbook.sheetnames:
-            logger.error(f"Sheet '{sheet_name}' not found in workbook. Cannot apply update.")
-            return
-
-        sheet = self.formula_workbook[sheet_name]
-        logger.info(f"Applying component update to sheet: {sheet_name}")
-
-        try:
-            for row_idx_str, cols in values.items():
-                for col_idx_str, cell_data in cols.items():
-                    # openpyxl is 1-indexed, so we add 1
-                    row = int(row_idx_str) + 1
-                    col = int(col_idx_str) + 1
-
-                    # The actual new value is nested under the 'v' key
-                    new_value = cell_data.get('v')
-
-                    # Apply the new value to the cell
-                    cell = sheet.cell(row=row, column=col)
-                    if cell.data_type == 'f':
-                        continue
-
-                    if isinstance(cell, MergedCell):
-                        for merged_range in sheet.merged_cells.ranges:
-                            if cell.coordinate in merged_range:
-                                top_left_cell = sheet.cell(row=merged_range.min_row, column=merged_range.min_col)
-                                if not isinstance(top_left_cell, MergedCell):
-                                    top_left_cell.value = new_value
-                                break
-                    else:
-                        cell.value = new_value
-
-                    logger.info(f"Updated cell ({row}, {col}) in '{sheet_name}' to: {new_value}")
-
-        except (ValueError, TypeError) as e:
-            logger.error(f"Error parsing update data: {e}. Data: {update_data}", exc_info=True)
-        except Exception as e:
-            logger.error(f"An unexpected error occurred while applying update: {e}", exc_info=True)
-
-    def update_sheet_from_dataframe(self, df: pd.DataFrame, sheet_name: str):
-        """
-        Updates a sheet in the formula workbook based on a DataFrame from the UI.
-        This invalidates the display workbook.
-        """
-        if not self.has_workbook():
-            raise ValueError("No workbook loaded to update.")
-        if sheet_name not in self.formula_workbook.sheetnames:
-            raise ValueError(f"Sheet '{sheet_name}' not found in the workbook.")
-
-        sheet = self.formula_workbook[sheet_name]
-
-        # Clear the sheet to prevent residual data
-        if sheet.max_row > 0:
-            sheet.delete_rows(1, sheet.max_row + 1)
-        if sheet.max_column > 0:
-            sheet.delete_cols(1, sheet.max_column + 1)
-
-        df_clean = df.replace({pd.NA: None})
-        for r in dataframe_to_rows(df_clean, index=False, header=True):
-            sheet.append(r)
-
-    def sheet_to_dataframe(self, workbook: openpyxl.Workbook, sheet_name: str) -> pd.DataFrame:
-        """Converts a sheet from a given workbook to a pandas DataFrame."""
-        if sheet_name not in workbook.sheetnames:
-            raise ValueError(f"Feuille '{sheet_name}' non trouvée")
-
-        sheet = workbook[sheet_name]
-        df = pd.DataFrame(sheet.values)
-
-        # Ensure minimum dimensions for the UI editor
-        min_rows, min_cols = 20, 10
-        current_rows, current_cols = df.shape
-
-        if current_rows < min_rows:
-            empty_rows = pd.DataFrame(index=range(current_rows, min_rows), columns=df.columns)
-            df = pd.concat([df, empty_rows], ignore_index=True)
-
-        if current_cols < min_cols:
-            for i in range(current_cols, min_cols):
-                df[i] = None
-
-        return df
+        if not sheet_name or not values or sheet_name not in self.workbook.sheetnames: return
+        sheet = self.workbook[sheet_name]
+        for row_idx, cols in values.items():
+            for col_idx, cell_data in cols.items():
+                cell = sheet.cell(row=int(row_idx) + 1, column=int(col_idx) + 1)
+                if not cell.data_type == 'f':  # Preserve formulas
+                    cell.value = cell_data.get('v')
 
     def save_workbook_to_bytes(self, workbook: openpyxl.Workbook) -> bytes:
-        """Saves a workbook to an in-memory byte stream."""
+        """
+        Saves a workbook to an in-memory byte stream.
+        """
         try:
             output = BytesIO()
             workbook.save(output)
             output.seek(0)
             return output.getvalue()
         except Exception as e:
-            logger.error(f"Erreur sauvegarde workbook: {str(e)}")
+            self.logger.error(f"Erreur sauvegarde workbook: {str(e)}")
             try:
-                logger.warning("Tentative de sauvegarde sans images...")
+                self.logger.warning("Tentative de sauvegarde sans images...")
                 return self._save_workbook_without_images(workbook)
             except:
                 raise e
@@ -183,36 +162,5 @@ class UpdatedExcelHandler:
                 sheet._images = []
         workbook.save(output)
         output.seek(0)
-        logger.warning("Workbook sauvegardé sans images")
+        UpdatedExcelHandler.logger.warning("Workbook sauvegardé sans images")
         return output.getvalue()
-
-    def get_sheet_info(self, workbook: openpyxl.Workbook) -> Dict[str, Any]:
-        """Récupère les informations sur les feuilles du workbook"""
-        info = {'sheets': [], 'total_sheets': len(workbook.sheetnames)}
-        for sheet_name in workbook.sheetnames:
-            sheet = workbook[sheet_name]
-            info['sheets'].append({
-                'name': sheet_name, 'max_row': sheet.max_row,
-                'max_column': sheet.max_column,
-                'has_formulas': any(
-                    isinstance(cell.value, str) and cell.value.startswith('=')
-                    for row in sheet.iter_rows(max_row=min(100, sheet.max_row)) for cell in row
-                ),
-                'has_images': hasattr(sheet, '_images') and sheet._images
-            })
-        return info
-
-    def cleanup_temp_files(self):
-        """Cleans up temporary files created during the session."""
-        for temp_file in self.temp_files:
-            try:
-                if os.path.exists(temp_file):
-                    os.unlink(temp_file)
-                    logger.info(f"Fichier temporaire supprimé: {temp_file}")
-            except Exception as e:
-                logger.warning(f"Impossible de supprimer {temp_file}: {str(e)}")
-        self.temp_files = []
-
-    def __del__(self):
-        """Destructor to ensure cleanup."""
-        self.cleanup_temp_files()

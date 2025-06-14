@@ -1,17 +1,11 @@
 import React, {useState, useRef, useEffect} from 'react';
 import './ChatPanel.css';
 import ReactMarkdown from 'react-markdown';
-import BpssToolPanel from "./BpssToolPanel.tsx"; // For rendering markdown from bot
-
-export interface Message {
-    role: 'user' | 'assistant';
-    content: string;
-    timestamp: string;
-    error?: boolean;
-}
+import BpssToolPanel from "./BpssToolPanel.tsx";
+import type {ChatMessage} from "../Shared/Contract.tsx"; // For rendering markdown from bot
 
 interface ChatPanelProps {
-    messages: Message[];
+    messages: ChatMessage[];
     onSendMessage: (message: string) => void;
     onFileUpload: (event: React.ChangeEvent<HTMLInputElement>) => void;
     onProcessBpss: (formData: FormData) => void;

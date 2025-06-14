@@ -5,6 +5,7 @@ import json
 from datetime import datetime
 from typing import Dict, Any, List, Optional
 
+import pandas as pd
 from openpyxl import Workbook
 from openpyxl.cell import Cell
 from openpyxl.styles import Border
@@ -56,7 +57,7 @@ class ExcelToUniverConverterOpt:
         for sheet in self.workbook.worksheets:
             sheet_id = self._generate_sheet_id(sheet.title)
             workbook_data["sheetOrder"].append(sheet_id)
-            workbook_data["sheets"][sheet_id] = self._convert_sheet(sheet, sheet_id)
+            workbook_data["sheets"][sheet_id] = self.convert_sheet(sheet, sheet_id=sheet_id)
 
         workbook_data["styles"] = self.style_registry
         return workbook_data
@@ -144,7 +145,7 @@ class ExcelToUniverConverterOpt:
         cell_data = {}
         if cell.value is not None:
             if cell.data_type != 'f':
-                cell_data["v"] = self._convert_cell_value(cell)
+                cell_data["v"] = self._convert_cell_value(cell.value)
             if cell.data_type == 'f':
                 cell_value = cell.value if isinstance(cell.value, str) else str(cell.value)
                 cell_data["f"] = f"={cell_value.lstrip('=')}"
@@ -158,8 +159,58 @@ class ExcelToUniverConverterOpt:
 
         return cell_data if cell_data else None
 
-    def _convert_sheet(self, sheet: Worksheet, sheet_id: str) -> Dict[str, Any]:
+    def import_from_dataframe(self, df: Any, sheet_name: str,
+                              start_row: int = 1, start_col: int = 1,
+                              override_formula: bool = False) -> Dict[str, Any]:
+        """
+        Import data from a pandas DataFrame into an existing sheet and return the converted sheet data.
+
+        :param df: The DataFrame to import.
+        :param sheet_name: Name of the sheet to import the DataFrame into.
+        :param start_row: Starting row (1-based) to place the DataFrame data.
+        :param start_col: Starting column (1-based) to place the DataFrame data.
+        :param override_formula: If True, will override existing formulas with DataFrame values.
+        :return: Dictionary containing the converted sheet data in Univer format.
+        """
+        if sheet_name not in self.workbook.sheetnames:
+            raise ValueError(f"Sheet '{sheet_name}' does not exist in the workbook.")
+
+        worksheet = self.workbook[sheet_name]
+
+        # Calculate the data range
+        num_rows, num_cols = df.shape
+
+        # Write DataFrame values to the worksheet
+        for row_idx in range(num_rows):
+            for col_idx in range(num_cols):
+                cell = worksheet.cell(row=start_row + row_idx, column=start_col + col_idx)
+
+                # Get the DataFrame value
+                df_value = df.iloc[row_idx, col_idx]
+
+                # Skip NaN values
+                if pd.isna(df_value):
+                    continue
+
+                # Only override if not a formula or if override_formula is True
+                if cell.data_type == 'f' and not override_formula:
+                    continue
+
+                # Handle different data types
+                if isinstance(df_value, str) and df_value.startswith('='):
+                    # It's a formula
+                    cell.value = df_value
+                else:
+                    # Regular value
+                    cell.value = df_value
+
+        # Convert the modified sheet using the existing convert_sheet method
+        return self.convert_sheet(worksheet)
+
+    def convert_sheet(self, sheet: Worksheet, sheet_id: str = None) -> Dict[str, Any]:
         max_row, max_col = ExcelUtils.get_data_only_range(sheet)
+        if sheet_id is None:
+            sheet_id = self._generate_sheet_id(sheet.title)
         return {
             "id": sheet_id,
             "name": sheet.title,
@@ -221,13 +272,14 @@ class ExcelToUniverConverterOpt:
             "startColumn": r.min_col - 1, "endColumn": r.max_col - 1
         } for r in sheet.merged_cells.ranges]
 
-    def _convert_cell_value(self, cell: Cell) -> Any:
-        value = cell.value
-        if isinstance(value, datetime):
-            return (value - datetime(1899, 12, 30)).total_seconds() / 86400
-        elif isinstance(value, bool):
-            return 1 if value else 0
-        return "" if value is None else value
+    def _convert_cell_value(self, cell_value) -> Any:
+        if isinstance(cell_value, datetime):
+            return (cell_value - datetime(1899, 12, 30)).total_seconds() / 86400
+        elif isinstance(cell_value, bool):
+            return 1 if cell_value else 0
+        elif isinstance(cell_value, pd.Timestamp):
+            return (cell_value.to_pydatetime() - datetime(1899, 12, 30)).total_seconds() / 86400
+        return "" if cell_value is None else cell_value
 
     def _extract_color(self, color) -> Optional[str]:
         if color is None: return None
