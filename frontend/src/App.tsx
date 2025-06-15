@@ -8,7 +8,7 @@ import './App.css';
 import type {ChatMessage, ServerMsg} from './Shared/Contract.tsx';
 import {useWorkbook} from "./ExcelViewer/WorkbookContext.tsx";
 import {blobToText} from "./Helpers/blobToText.tsx";
-import UpdatesModal from "./Components/UpdatesModal.tsx";
+import ValidationToolbar from "./Components/ValidationToolbar.tsx";
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || '';
 console.log(`Configuring API calls to: '${API_BASE_URL}'`);
@@ -32,6 +32,9 @@ function App() {
     const jsonWorker = useRef<Worker | null>(null);
     const sheetRef = useRef<UniverSheetHandle | null>(null);
     const [isCalculating, setIsCalculating] = useState(false);
+
+    // Check if we have pending validations
+    const hasValidations = state.pendingOps.length > 0;
 
     // --- WebSocket Connection ---
     useEffect(() => {
@@ -244,7 +247,7 @@ function App() {
     }, [sessionId]);
 
     return (
-        <div className="app-container">
+        <div className={`app-container ${hasValidations ? 'has-validations' : ''}`}>
             <header className="app-header">
                 <h1>BudgiBot UI</h1>
                 <p>Session ID: {sessionId || 'Connecting...'}</p>
@@ -287,7 +290,7 @@ function App() {
                     </div>
                 </div>
             </main>
-            <UpdatesModal ws={ws.current}/>
+            <ValidationToolbar ws={ws.current}/>
         </div>
     );
 }

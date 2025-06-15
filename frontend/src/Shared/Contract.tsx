@@ -1,23 +1,54 @@
 import type { IWorkbookData } from "@univerjs/presets";
 
-export interface Operation {
-  id: string;
-  type: 'CREATE_SHEET' | 'DELETE_SHEET' | 'UPDATE_CELL' | 'REPLACE_SHEET';
-  description: string;
-  // Everything Univer needs to replay the change:
-  payload: Record<string, unknown>;
-}
-
-export type ServerMsg =
-  | { type: 'session_created'; payload: { session_id: string } }
-  | { type: 'chat_message'; payload: ChatMessage }
-  | { type: 'workbook_update'; payload: IWorkbookData }
-  | { type: 'apply_direct_updates'; payload: { operations: Operation[] } }
-  | { type: 'propose_updates'; payload: { operations: Operation[] } };
+// Shared type definitions for the application
 
 export interface ChatMessage {
-    role: 'user' | 'assistant';
-    content: string;
-    timestamp: string;
-    error?: boolean;
+  role: 'user' | 'assistant';
+  content: string;
+  timestamp: string;
+  error?: boolean;
+}
+
+export interface Operation {
+  id: string;
+  type: 'UPDATE_CELL' | 'CREATE_SHEET' | 'DELETE_SHEET' | 'REPLACE_SHEET';
+  payload: any;
+  description?: string;
+}
+
+export interface ServerMsg {
+  type: string;
+  payload: any;
+}
+
+// Specific message types from server
+export interface WorkbookUpdateMsg extends ServerMsg {
+  type: 'workbook_update';
+  payload: IWorkbookData; // IWorkbookData
+}
+
+export interface ApplyDirectUpdatesMsg extends ServerMsg {
+  type: 'apply_direct_updates';
+  payload: {
+    operations: Operation[];
+  };
+}
+
+export interface ProposeUpdatesMsg extends ServerMsg {
+  type: 'propose_updates';
+  payload: {
+    operations: Operation[];
+  };
+}
+
+export interface SessionCreatedMsg extends ServerMsg {
+  type: 'session_created';
+  payload: {
+    session_id: string;
+  };
+}
+
+export interface ChatMessageMsg extends ServerMsg {
+  type: 'chat_message';
+  payload: ChatMessage;
 }
