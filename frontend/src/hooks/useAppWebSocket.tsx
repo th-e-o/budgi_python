@@ -36,10 +36,9 @@ function setupConnection(
             wsUrl = `${wsHost}/ws`;
         } else {
             const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-            wsUrl = `${wsProtocol}//${window.location.host}/ws`;
+            wsUrl = `${wsProtocol}//${window.location.host}${window.location.pathname}ws`;
         }
         console.log(`Connecting WebSocket to: ${wsUrl}`);
-
         wsInstance = new WebSocket(wsUrl);
 
         wsInstance.onopen = () => {

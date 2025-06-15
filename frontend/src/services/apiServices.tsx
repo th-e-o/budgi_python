@@ -4,22 +4,33 @@ import type { IWorkbookData } from '@univerjs/core';
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || '';
 console.log(`Configuring API calls to: '${API_BASE_URL}'`);
 
+const getBaseURL = () => {
+    if (API_BASE_URL) {
+        return API_BASE_URL;
+    }
+    // Make sure the path ends with a slash so relative paths are resolved correctly
+    const path = window.location.pathname.endsWith('/')
+        ? window.location.pathname
+        : window.location.pathname + '/';
+    return `${window.location.protocol}//${window.location.host}${path}`;
+};
+
 const apiClient = axios.create({
-  baseURL: API_BASE_URL || `${window.location.protocol}//${window.location.host}`,
+  baseURL: getBaseURL(),
   withCredentials: true,
 });
 
 export const uploadFile = async (file: File): Promise<IWorkbookData> => {
   const formData = new FormData();
   formData.append('file', file);
-  const response = await apiClient.post<IWorkbookData>('/upload', formData);
+  const response = await apiClient.post<IWorkbookData>('upload', formData);
   return response.data;
 };
 
 export const processBpss = async (formData: FormData): Promise<void> => {
-  await apiClient.post('/bpss/process', formData);
+  await apiClient.post('bpss/process', formData);
 };
 
 export const performSmallUpdate = async (): Promise<void> => {
-  await apiClient.post('/perform_small_update');
+  await apiClient.post('perform_small_update');
 };

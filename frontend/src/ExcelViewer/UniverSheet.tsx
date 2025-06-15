@@ -3,9 +3,12 @@ import {
     defaultTheme,
     FUniver,
     LocaleType,
-    merge,
+    merge, Univer,
 } from "@univerjs/presets";
-import {CalculationMode, UniverSheetsCorePreset, type ISetRangeValuesMutationParams, type ISheetValueChangedEvent} from "@univerjs/presets/preset-sheets-core";
+import {
+    CalculationMode, UniverSheetsCorePreset,
+    type IBeforeSheetEditStartEventParams, type ISetRangeValuesMutationParams, type ISheetValueChangedEvent
+} from "@univerjs/presets/preset-sheets-core";
 import UniverPresetSheetsCoreFrFR from "@univerjs/presets/preset-sheets-core/locales/fr-FR";
 import {UniverSheetsDataValidationPreset} from "@univerjs/presets/preset-sheets-data-validation";
 import UniverPresetSheetsDataValidationFrFR from "@univerjs/presets/preset-sheets-data-validation/locales/fr-FR";
@@ -13,12 +16,13 @@ import "@univerjs/presets/lib/styles/preset-sheets-core.css";
 import "@univerjs/presets/lib/styles/preset-sheets-data-validation.css";
 
 import {forwardRef, useEffect, useImperativeHandle, useRef} from "react";
-// import {type IDisposable, type IWorkbookData} from "@univerjs/core";
 import {type IDisposable, type IWorkbookData} from "@univerjs/core";
 import type {Operation} from "../types/contract.tsx";
-import {applyOpsToUniver} from "../Helpers/applyOpsToUniver.tsx";
+import {applyOpsToUniver, isApplyingProgrammaticChange} from "../Helpers/applyOpsToUniver.tsx";
 import {setUniverAPI} from "./UniverInstance.tsx";
 import {useWorkbook} from "./WorkbookContext.tsx";
+import {IRenderManagerService} from "@univerjs/engine-render";
+import {AnimatedFlashObject} from "./ChangeDisallowedExtension.tsx";
 
 export interface UniverSheetHandle {
     applyOperations: (ops: Operation[]) => void;
@@ -36,7 +40,9 @@ const UniverSheet = forwardRef<UniverSheetHandle, Props>(
         const {state} = useWorkbook();
         const containerRef = useRef<HTMLDivElement>(null);
         const univerApiRef = useRef<FUniver | null>(null);
+        const univerInstanceRef = useRef<Univer | null>(null);
         const loadedPointer = useRef<IWorkbookData | null>(null);
+        const isUserEditAllowedRef = useRef<boolean>(true);
 
         useImperativeHandle(ref, () => ({
             applyOperations: (ops: Operation[]) => applyOpsToUniver(ops),
@@ -52,15 +58,17 @@ const UniverSheet = forwardRef<UniverSheetHandle, Props>(
         const isLoadingRef = useRef<boolean>(false);
         const isValidationPendingRef = useRef<boolean>(false);
 
-        // Track if validation is pending to avoid processing changes during validation
+        // Track if we are currently processing a validation operation or loading data to prevent user edits
         useEffect(() => {
-            isValidationPendingRef.current = state.pendingOps.length > 0;
+            const isPending = state.pendingOps.length > 0;
+            const isLoading = isLoadingRef.current;
+            isUserEditAllowedRef.current = !isPending && !isLoading;
         }, [state.pendingOps]);
 
         useEffect(() => {
             if (!containerRef.current || univerApiRef.current) return;
 
-            const {univerAPI} = createUniver({
+            const {univer, univerAPI} = createUniver({
                 locale: LocaleType.FR_FR,
                 locales: {[LocaleType.FR_FR]: merge({}, UniverPresetSheetsCoreFrFR, UniverPresetSheetsDataValidationFrFR)},
                 theme: defaultTheme,
@@ -75,12 +83,15 @@ const UniverSheet = forwardRef<UniverSheetHandle, Props>(
                         formula: {
                             initialFormulaComputing: CalculationMode.NO_CALCULATION,
                         },
+
                     }),
                     UniverSheetsDataValidationPreset(),
                 ],
             });
 
             univerApiRef.current = univerAPI;
+            univerInstanceRef.current = univer;
+
             setUniverAPI(univerAPI);
 
             const disposables: IDisposable[] = [];
@@ -100,8 +111,66 @@ const UniverSheet = forwardRef<UniverSheetHandle, Props>(
                 }
             }));
 
+            disposables.push(
+                univerAPI.addEvent(univerAPI.Event.BeforeSheetEditStart, (params: IBeforeSheetEditStartEventParams) => {
+                    if (!isUserEditAllowedRef.current) {
+                        params.cancel = true; // Prevent the edit
+
+                        const core = univerInstanceRef.current;
+                        if (!core) return;
+
+                        const workbook = univerAPI.getActiveWorkbook();
+                        const worksheet = workbook?.getActiveSheet();
+                        const renderManager = core.__getInjector().get(IRenderManagerService);
+                        const renderUnit = renderManager.getRenderById(workbook!.getId());
+                        const mainComponent = renderUnit?.mainComponent;
+                        const scene = renderUnit?.scene;
+                        const skeleton = worksheet?.getSkeleton();
+
+                        if (!scene || !skeleton || !mainComponent) return;
+
+                        const { startX, startY, endX, endY } = skeleton.getCellWithCoordByIndex(params.row, params.column);
+
+                        const animationDuration = 500; // Duration in milliseconds
+                        const flashObject = new AnimatedFlashObject(
+                            `flash-${Date.now()}`,
+                            {
+                                left: startX,
+                                top: startY,
+                                width: endX - startX,
+                                height: endY - startY,
+                                initialColor: [255, 0, 0], // Red
+                                duration: 500, // Animate for 500ms
+                                zIndex: 60,
+                                evented: false,
+                            }
+                        );
+
+                        scene.addObject(flashObject);
+
+                        const animationStartTime = Date.now();
+
+                        const animate = () => {
+                            const elapsedTime = Date.now() - animationStartTime;
+
+                            // Force a repaint on each frame
+                            mainComponent.makeDirty(true);
+
+                            // Continue the loop until the animation is done
+                            if (elapsedTime < animationDuration) {
+                                requestAnimationFrame(animate);
+                            }
+                        };
+
+                        // Kick off the first frame
+                        requestAnimationFrame(animate);
+                    }
+                })
+            );
+
             /* --- Cell-change listener ------------------------ */
             disposables.push(univerAPI.addEvent(univerAPI.Event.SheetValueChanged, async (params: ISheetValueChangedEvent) => {
+                if (isApplyingProgrammaticChange()) return;
                 if (isLoadingRef.current) return;
                 if (isValidationPendingRef.current) return; // skip if there are pending ops
                 console.log("Started processing change message")
@@ -128,7 +197,6 @@ const UniverSheet = forwardRef<UniverSheetHandle, Props>(
                 const filteredChange: { [key: string]: { [key: string]: any } } = {};
                 let hasValidChanges = false;
 
-                // This entire block is now deferred and won't block the UI
                 // @ts-expect-error - TS doesn't recognize the debounce function
                 Object.entries(originalChange).forEach(([rowIndex, rowData]) => {
                     const rowChanges: { [key: string]: any } = {};
