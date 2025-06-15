@@ -195,15 +195,6 @@ async def websocket_endpoint(websocket: WebSocket):
                 elif msg_type == 'validate_change':
                     await session_sync_manager.handle_validate_op(payload)
 
-                elif msg_type == 'reject_change':
-                    await session_sync_manager.handle_reject_op(payload.get('id'))
-
-                elif msg_type == 'validate_all_changes':
-                    await session_sync_manager.handle_validate_all()
-
-                elif msg_type == 'reject_all_changes':
-                    await session_sync_manager.handle_reject_all()
-
                 elif msg_type == 'user_message':
                      # Placeholder for future LLM interaction
                     await conn_manager.send_to(client_id, "chat_message", {

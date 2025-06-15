@@ -87,7 +87,7 @@ class ExcelSyncManager:
         logger.info(f"Received cell update from Client ID: {self.client_id}, Payload: {payload}")
         self.handler.apply_component_update(payload)
 
-    async def handle_validate_op(self, op_id: str):
+    async def handle_validate_op(self, payload):
         """
         Handles user validated and rejected requests of the following format:
 
@@ -96,48 +96,23 @@ class ExcelSyncManager:
                 "refused": ["ddbeaa31-89d4-41a8-b53b-04147a087455"]
             }
         """
-        op = self.pending_operations.pop(op_id, None)
-        if op:
-            handler_op = {
-                "type": op['backend_type'],
-                "description": op['description'],
-                "payload": op['handler_payload']
-            }
-            await self.handler.apply_updates([handler_op])
-        else:
-            logger.warning(f"Received validation for an unknown operation ID: {op_id}")
-            logger.warning(f"Pending operations: {self.pending_operations}")
+        accepted_ops = []
+        for op_id in payload.get('accepted', []):
+            op = self.pending_operations.pop(op_id, None)
+            if op:
+                handler_op = {
+                    "type": op['backend_type'],
+                    "description": op['description'],
+                    "payload": op['handler_payload']
+                }
+                accepted_ops.append(handler_op)
 
-    async def handle_reject_op(self, op_id: str):
-        """Rejects a single pending operation and notifies the client."""
-        op = self.pending_operations.pop(op_id, None)
-        if op:
-            await self.conn_manager.send_to(self.client_id, "chat_message", {
-                "role": "assistant", "content": f"ℹ️ Opération '{op['description']}' rejetée.",
-                "timestamp": datetime.now().isoformat()
-            })
+        await self.handler.apply_updates(accepted_ops)
 
-    async def handle_validate_all(self):
-        """Applies all pending operations and sends a full update."""
-        if not self.pending_operations: return
-        ops_to_apply = list(self.pending_operations.values())
         self.pending_operations.clear()
-        handler_ops = [{
-            "type": op['backend_type'], "description": op['description'], "payload": op['handler_payload']
-        } for op in ops_to_apply]
-        await self.handler.apply_updates(handler_ops)
-
-    async def handle_reject_all(self):
-        """Rejects all pending operations and notifies the client."""
-        if not self.pending_operations: return
-        count = len(self.pending_operations)
-        self.pending_operations.clear()
-        if count > 1:
-            message = f"ℹ️ {count} modifications en attente ont été rejetées."
-        else:
-            message = "ℹ️ La modification en attente a été rejetée."
-
+        message = f"✅ {len(accepted_ops)} modifications validées et appliquées."
         await self.conn_manager.send_to(self.client_id, "chat_message", {
-            "role": "assistant", "content": message,
+            "role": "assistant",
+            "content": message,
             "timestamp": datetime.now().isoformat()
         })
