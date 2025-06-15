@@ -124,10 +124,7 @@ function App() {
 
     const handleRecalculate = useCallback(() => {
         sheetRef.current?.recalculateFormulas();
-
-        // Optional: Add feedback for the user
         setIsCalculating(true);
-        // We will set this back to false using an event from Univer
     }, []);
 
     // Optional: Listen for calculation end to update UI
@@ -270,7 +267,6 @@ function App() {
                         <h2>Excel Viewer</h2>
                         <UniverSheet
                             ref={sheetRef}
-                            workbookData={state.workbook}
                             onCellChange={handleCellChange}
                             onCalculationEnd={handleCalculationEnd}
                             height={700}

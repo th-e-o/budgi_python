@@ -92,7 +92,7 @@ const UniverSheet = forwardRef<UniverSheetHandle, Props>(
 
             disposables.push(formula.calculationStart((forceCalculation) => {
                 const currentFormula = univerApiRef.current?.getFormula();
-                if (forceCalculation){
+                if (forceCalculation) {
                     console.log("Manual calculation has started with force calculation.");
                 } else {
                     console.log("Canceling automatic calculation as it was not forced.");
