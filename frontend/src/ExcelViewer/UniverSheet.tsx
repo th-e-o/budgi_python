@@ -5,7 +5,7 @@ import {
     LocaleType,
     merge,
 } from "@univerjs/presets";
-import {CalculationMode, UniverSheetsCorePreset} from "@univerjs/presets/preset-sheets-core";
+import {CalculationMode, UniverSheetsCorePreset, type ISetRangeValuesMutationParams, type ISheetValueChangedEvent} from "@univerjs/presets/preset-sheets-core";
 import UniverPresetSheetsCoreFrFR from "@univerjs/presets/preset-sheets-core/locales/fr-FR";
 import {UniverSheetsDataValidationPreset} from "@univerjs/presets/preset-sheets-data-validation";
 import UniverPresetSheetsDataValidationFrFR from "@univerjs/presets/preset-sheets-data-validation/locales/fr-FR";
@@ -15,7 +15,7 @@ import "@univerjs/presets/lib/styles/preset-sheets-data-validation.css";
 import {forwardRef, useEffect, useImperativeHandle, useRef} from "react";
 // import {type IDisposable, type IWorkbookData} from "@univerjs/core";
 import {type IDisposable, type IWorkbookData} from "@univerjs/core";
-import type {Operation} from "../Shared/Contract.tsx";
+import type {Operation} from "../types/contract.tsx";
 import {applyOpsToUniver} from "../Helpers/applyOpsToUniver.tsx";
 import {setUniverAPI} from "./UniverInstance.tsx";
 import {useWorkbook} from "./WorkbookContext.tsx";
@@ -25,7 +25,6 @@ export interface UniverSheetHandle {
     recalculateFormulas: () => void;
 }
 
-// Define the props our component will accept
 interface Props {
     onCellChange: (changeData: any) => void;
     onCalculationEnd?: () => void;
@@ -51,6 +50,12 @@ const UniverSheet = forwardRef<UniverSheetHandle, Props>(
         }));
 
         const isLoadingRef = useRef<boolean>(false);
+        const isValidationPendingRef = useRef<boolean>(false);
+
+        // Track if validation is pending to avoid processing changes during validation
+        useEffect(() => {
+            isValidationPendingRef.current = state.pendingOps.length > 0;
+        }, [state.pendingOps]);
 
         useEffect(() => {
             if (!containerRef.current || univerApiRef.current) return;
@@ -95,13 +100,15 @@ const UniverSheet = forwardRef<UniverSheetHandle, Props>(
                 }
             }));
 
-            /* --- Cell-change listener (unchanged) ------------------------ */
-            disposables.push(univerAPI.addEvent(univerAPI.Event.SheetValueChanged, async (params: any) => {
+            /* --- Cell-change listener ------------------------ */
+            disposables.push(univerAPI.addEvent(univerAPI.Event.SheetValueChanged, async (params: ISheetValueChangedEvent) => {
                 if (isLoadingRef.current) return;
+                if (isValidationPendingRef.current) return; // skip if there are pending ops
                 console.log("Started processing change message")
                 const payload = params.payload;
+                const payloadParams = payload.params as ISetRangeValuesMutationParams;
 
-                if (!payload || !payload.params || !payload.params.cellValue || payload.id !== "sheet.mutation.set-range-values") {
+                if (!payload || !payloadParams || !payloadParams.cellValue || payload.id !== "sheet.mutation.set-range-values") {
                     console.warn("Invalid payload, skipping debounced processing.");
                     return;
                 }
@@ -122,6 +129,7 @@ const UniverSheet = forwardRef<UniverSheetHandle, Props>(
                 let hasValidChanges = false;
 
                 // This entire block is now deferred and won't block the UI
+                // @ts-expect-error - TS doesn't recognize the debounce function
                 Object.entries(originalChange).forEach(([rowIndex, rowData]) => {
                     const rowChanges: { [key: string]: any } = {};
                     let rowHasValidChanges = false;
@@ -142,6 +150,8 @@ const UniverSheet = forwardRef<UniverSheetHandle, Props>(
                     console.log("Debounced processing found no non-formula changes. Skipping send.");
                     return;
                 }
+
+                console.log("Sending debounced change:", filteredChange);
 
                 const changeData = {
                     sheet: modifiedSheet.getSheetName() ?? "Unknown",

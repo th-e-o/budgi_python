@@ -1,325 +1,285 @@
-import {type IWorksheetData} from '@univerjs/core';
-import type {Operation} from '../Shared/Contract';
-import {getUniverAPI} from '../ExcelViewer/UniverInstance';
+import { type IWorksheetData } from '@univerjs/core';
+import { getUniverAPI } from '../ExcelViewer/UniverInstance';
+import type {Operation} from "../types/contract.tsx";
+import type { FWorkbook } from '@univerjs/presets/lib/types/preset-sheets-core/index.js';
 
-// Store for original states to enable rollback
-const operationHistory = new Map<string, any>();
+// =================================================================
+// Types for Capturing Pre-Operation State
+// =================================================================
+
+type UpdateCellHistory = {
+  type: 'UPDATE_CELL';
+  sheetName: string;
+  row: number;
+  col: number;
+  originalValue: any;
+  originalFormula: string | null;
+};
+
+type CreateSheetHistory = {
+  type: 'CREATE_SHEET';
+  sheetName: string;
+};
+
+type SheetDataHistory = {
+  type: 'DELETE_SHEET' | 'REPLACE_SHEET';
+  sheetName: string;
+  originalSheetSnapshot: IWorksheetData;
+  originalIndex: number;
+};
+
+type OperationHistoryState = UpdateCellHistory | CreateSheetHistory | SheetDataHistory;
+
+// =================================================================
+// Module State
+// =================================================================
 
 /**
- * Captures the current state before applying an operation
+ * Stores the state of the workbook *before* an operation was applied.
+ * This is essential for the rollback and re-apply (toggle) functionality.
+ * This map is only cleared via `clearOperationHistory` after the user
+ * has confirmed their validation choices.
  */
-function captureStateBeforeOperation(op: Operation): any {
-    const univer = getUniverAPI();
-    if (!univer) return null;
+const operationHistory = new Map<string, OperationHistoryState>();
 
-    const wb = univer.getActiveWorkbook();
-    if (!wb) return null;
+// =================================================================
+// Private Helper Functions
+// =================================================================
 
-    switch (op.type) {
-        case 'UPDATE_CELL': {
-            const {sheet, row, col} = op.payload as any;
-            const targetSheet = wb.getSheetByName(sheet);
-            if (!targetSheet) return null;
+/**
+ * Captures the current state of the workbook related to a specific operation
+ * before it is applied. This captured state is used for potential rollbacks.
+ * @returns The state object to be stored, or null if capture fails.
+ */
+function captureStateBeforeOperation(op: Operation, wb: FWorkbook): OperationHistoryState | null {
+  switch (op.type) {
+    case 'UPDATE_CELL': {
+      const { sheet: sheetName, row, col } = op.payload;
+      const targetSheet = wb.getSheetByName(sheetName);
+      if (!targetSheet) return null;
 
-            const cell = targetSheet.getRange(row, col);
-            const originalValue = cell.getValue();
-            const originalFormula = cell.getFormula();
+      const cell = targetSheet.getRange(row, col);
+      return {
+        type: 'UPDATE_CELL',
+        sheetName,
+        row,
+        col,
+        originalValue: cell.getValue(),
+        originalFormula: cell.getFormula(),
+      };
+    }
 
-            return {
-                type: 'UPDATE_CELL',
-                sheet,
-                row,
-                col,
-                originalValue: originalValue,
-                originalFormula: originalFormula,
-                hadValue: originalValue !== null && originalValue !== undefined && originalValue !== ''
-            };
-        }
+    case 'CREATE_SHEET': {
+      return {
+        type: 'CREATE_SHEET',
+        sheetName: op.payload.sheet_name,
+      };
+    }
 
+    case 'DELETE_SHEET': {
+      const { sheet_name } = op.payload;
+      const sheet = wb.getSheetByName(sheet_name);
+      if (!sheet) return null;
+
+      return {
+        type: 'DELETE_SHEET',
+        sheetName: sheet_name,
+        originalSheetSnapshot: wb.getSnapshot().sheets[sheet.getSheetId()] as IWorksheetData,
+        originalIndex: sheet.getIndex(),
+      };
+    }
+
+    case 'REPLACE_SHEET': {
+      const sheetName = op.payload.name;
+      const sheet = wb.getSheetByName(sheetName);
+      if (!sheet) return null; // Can't replace a sheet that doesn't exist
+
+      return {
+        type: 'REPLACE_SHEET',
+        sheetName,
+        originalSheetSnapshot: wb.getSnapshot().sheets[sheet.getSheetId()] as IWorksheetData,
+        originalIndex: sheet.getIndex(),
+      };
+    }
+
+    default:
+        // This case should not be reachable with a well-typed `Operation` union
+        return null;
+  }
+}
+
+// =================================================================
+// Public API
+// =================================================================
+
+/**
+ * Applies a list of operations to the active Univer workbook.
+ * This modifies the workbook in-place for performance.
+ *
+ * @param ops - An array of operations to apply.
+ * @param captureHistory - If true, captures the pre-operation state for rollback.
+ */
+export function applyOpsToUniver(
+  ops: Operation[],
+  captureHistory: boolean = true
+): void {
+  const univer = getUniverAPI();
+  if (!univer) {
+    console.error('[applyOpsToUniver] Univer API not available.');
+    return;
+  }
+
+  const wb = univer.getActiveWorkbook();
+  if (!wb) {
+    console.error('[applyOpsToUniver] No active workbook.');
+    return;
+  }
+
+  ops.forEach((op) => {
+    if (captureHistory && !operationHistory.has(op.id)) {
+      const originalState = captureStateBeforeOperation(op, wb);
+      if (originalState) {
+        console.log(`[applyOpsToUniver] Capturing initial state for op ${op.id}`, originalState);
+        operationHistory.set(op.id, originalState);
+      } else {
+        console.warn(`[applyOpsToUniver] Could not capture state for op ${op.id}`);
+      }
+    }
+
+    try {
+      switch (op.type) {
         case 'CREATE_SHEET': {
-            // For create, we just need to remember it was created
-            return {
-                type: 'CREATE_SHEET',
-                sheet_name: (op.payload as any).sheet_name
-            };
+          wb.create(op.payload.sheet_name, 300, 52); // Using default dimensions
+          break;
         }
 
         case 'DELETE_SHEET': {
-            const {sheet_name} = op.payload as any;
-            const sheet = wb.getSheetByName(sheet_name);
-            if (!sheet) return null;
+          const sheet = wb.getSheetByName(op.payload.sheet_name);
+          if (sheet) {
+            wb.deleteSheet(sheet);
+          } else {
+            console.warn(`[applyOpsToUniver] Sheet "${op.payload.sheet_name}" not found for deletion.`);
+          }
+          break;
+        }
 
-            // Capture sheet data before deletion
-            const rowCount = sheet.getMaxRows();
-            const colCount = sheet.getMaxColumns();
-            const cellData: any = {};
-
-            // Capture all cell data
-            for (let r = 0; r < rowCount; r++) {
-                for (let c = 0; c < colCount; c++) {
-                    const cell = sheet.getRange(r, c);
-                    const value = cell.getValue();
-                    const formula = cell.getFormula();
-                    if (value !== null || formula) {
-                        if (!cellData[r]) cellData[r] = {};
-                        cellData[r][c] = {
-                            v: value,
-                            f: formula
-                        };
-                    }
-                }
-            }
-
-            return {
-                type: 'DELETE_SHEET',
-                sheet_name,
-                sheetData: {
-                    name: sheet_name,
-                    rowCount,
-                    columnCount: colCount,
-                    cellData
-                }
-            };
+        case 'UPDATE_CELL': {
+          const { sheet: sheetName, row, col, value } = op.payload;
+          const targetSheet = wb.getSheetByName(sheetName);
+          if (!targetSheet) {
+            console.warn(`[applyOpsToUniver] Sheet "${sheetName}" not found for cell update.`);
+            break;
+          }
+          const range = targetSheet.getRange(row, col);
+          const cellValue = value?.v !== undefined ? value.v : value;
+          if (cellValue === null || cellValue === undefined) range.clearContent()
+          else range.setValue(cellValue);
+          break;
         }
 
         case 'REPLACE_SHEET': {
-            const worksheetData = op.payload as unknown as IWorksheetData;
-            const existingSheet = wb.getSheetByName(worksheetData.name);
+          const newSheetData = op.payload;
+          const oldSheet = wb.getSheetByName(newSheetData.name);
 
-            if (existingSheet) {
-                // Capture current sheet state
-                const rowCount = existingSheet.getMaxRows();
-                const colCount = existingSheet.getMaxColumns();
-                const cellData: any = {};
-
-                for (let r = 0; r < rowCount; r++) {
-                    for (let c = 0; c < colCount; c++) {
-                        const cell = existingSheet.getRange(r, c);
-                        const value = cell.getValue();
-                        const formula = cell.getFormula();
-                        if (value !== null || formula) {
-                            if (!cellData[r]) cellData[r] = {};
-                            cellData[r][c] = {
-                                v: value,
-                                f: formula
-                            };
-                        }
-                    }
-                }
-
-                return {
-                    type: 'REPLACE_SHEET',
-                    sheetData: {
-                        name: worksheetData.name,
-                        rowCount,
-                        columnCount: colCount,
-                        cellData
-                    }
-                };
-            }
-
-            return null;
+          if (oldSheet) {
+            const index = oldSheet.getIndex();
+            wb.deleteSheet(oldSheet);
+            // Create a new sheet with the new data at the old index to preserve order
+            wb.create(newSheetData.name, newSheetData.rowCount, newSheetData.columnCount, {
+              index,
+              sheet: newSheetData,
+            });
+          } else {
+            // If it doesn't exist, just create it at the end
+            wb.create(newSheetData.name, newSheetData.rowCount, newSheetData.columnCount, {
+              sheet: newSheetData,
+            });
+          }
+          break;
         }
-
-        default:
-            return null;
+      }
+    } catch (err) {
+      console.error(`[applyOpsToUniver] Failed to apply op ${op.id}:`, err);
     }
+  });
 }
 
 /**
- * Applies backend-style operations to the **already loaded** workbook
- * without recreating the workbook from scratch.
- * Now with rollback support.
- */
-export function applyOpsToUniver(
-    ops: Operation[],
-    captureHistory: boolean = true
-): void {
-    console.log(`[applyOpsToUniver] Applying ${ops.length} operations to Univer workbook`);
-    const univer = getUniverAPI();
-    if (!univer) return;
-
-    const wb = univer.getActiveWorkbook();
-    if (!wb) return;
-
-    console.log(`[applyOpsToUniver] Active workbook: ${wb.getName()}`);
-
-    ops.forEach((op) => {
-        console.log(`[applyOpsToUniver] Applying op ${op.id} of type ${op.type}`, op);
-
-        // Capture state before operation for rollback
-        if (captureHistory) {
-            const originalState = captureStateBeforeOperation(op);
-            if (originalState) {
-                operationHistory.set(op.id, originalState);
-            }
-        }
-
-        try {
-            switch (op.type) {
-                case 'CREATE_SHEET': {
-                    // Payload: { sheet_name: string }
-                    const {sheet_name} = op.payload as any;
-                    wb.create(sheet_name, 300, 52); // basic API
-                    break;
-                }
-
-                case 'DELETE_SHEET': {
-                    const {sheet_name} = op.payload as any;
-                    const sheet = wb.getSheetByName(sheet_name);
-                    if (!sheet) {
-                        console.warn(`[applyOpsToUniver] Sheet ${sheet_name} not found`);
-                        return;
-                    }
-                    const deleted = wb.deleteSheet(sheet)
-                    if (!deleted) {
-                        console.warn(`[applyOpsToUniver] Failed to delete sheet ${sheet_name}`);
-                    } else {
-                        console.log(`[applyOpsToUniver] Deleted sheet ${sheet_name}`);
-                    }
-                    break;
-                }
-
-                case 'UPDATE_CELL': {
-                    const {sheet, row, col, value} = op.payload as any;
-                    const targetSheet = wb.getSheetByName(sheet);
-                    if (!targetSheet) {
-                        console.warn(`[applyOpsToUniver] Sheet ${sheet} not found`);
-                        break;
-                    }
-                    const range = targetSheet.getRange(row, col);
-                    if (!range) {
-                        console.warn(`[applyOpsToUniver] Range [${row},${col}] not found in sheet ${sheet}`);
-                        break;
-                    }
-                    // Handle different value types
-                    const cellValue = value?.v !== undefined ? value.v : value;
-                    range.setValue(cellValue);
-                    break;
-                }
-
-                case 'REPLACE_SHEET': {
-                    const worksheetData = op.payload as unknown as IWorksheetData
-                    const existingSheet = wb.getSheetByName(worksheetData.name);
-
-                    const maxRow = worksheetData.rowCount
-                    const maxCol = worksheetData.columnCount
-
-                    if (existingSheet) {
-                        existingSheet.setRowCount(maxRow)
-                        existingSheet.setColumnCount(maxCol)
-                        const range = existingSheet.getRange(0, 0, maxRow, maxCol)
-                        range.setValues(worksheetData.cellData)
-                    } else {
-                        wb.create(worksheetData.name, maxRow, maxCol, {
-                            index: wb.getSheets().length,
-                            sheet: worksheetData
-                        })
-                    }
-
-                    break;
-                }
-
-                default:
-                    console.warn(`[applyOpsToUniver] Unknown op: ${op.type}`);
-            }
-        } catch (err) {
-            console.error(`[applyOpsToUniver] Failed op ${op.id}`, err);
-        }
-    });
-}
-
-/**
- * Rollback a single operation using stored history
+ * Reverts a single operation using its stored history.
+ *
+ * @param op - The operation to roll back.
+ * @returns True if the rollback was successful, false otherwise.
  */
 export function rollbackOperation(op: Operation): boolean {
-    const univer = getUniverAPI();
-    if (!univer) return false;
+  const univer = getUniverAPI();
+  if (!univer) return false;
+  const wb = univer.getActiveWorkbook();
+  if (!wb) return false;
 
-    const wb = univer.getActiveWorkbook();
-    if (!wb) return false;
+  const originalState = operationHistory.get(op.id);
+  if (!originalState) {
+    console.warn(`[rollbackOperation] No history found for operation ${op.id}. Cannot roll back.`);
+    return false;
+  }
 
-    const originalState = operationHistory.get(op.id);
-    if (!originalState) {
-        console.warn(`[rollbackOperation] No history found for operation ${op.id}`);
-        return false;
-    }
+  console.log(`[rollbackOperation] Rolling back op ${op.id} of type ${originalState.type}`);
 
-    console.log(`[rollbackOperation] Rolling back operation ${op.id} of type ${originalState.type}`);
+  try {
+    switch (originalState.type) {
+      case 'UPDATE_CELL': {
+        const { sheetName, row, col, originalValue, originalFormula } = originalState;
+        const targetSheet = wb.getSheetByName(sheetName);
+        if (!targetSheet) return false;
 
-    try {
-        switch (originalState.type) {
-            case 'UPDATE_CELL': {
-                const {sheet, row, col, originalValue, originalFormula, hadValue} = originalState;
-                const targetSheet = wb.getSheetByName(sheet);
-                if (!targetSheet) return false;
-
-                const cell = targetSheet.getRange(row, col);
-                if (originalFormula) {
-                    cell.setValue(originalFormula);
-                } else if (hadValue) {
-                    cell.setValue(originalValue);
-                } else {
-                    // Clear the cell if it was originally empty
-                    cell.setValue('');
-                }
-                break;
-            }
-
-            case 'CREATE_SHEET': {
-                // To rollback a create, we delete the sheet
-                const {sheet_name} = originalState;
-                const sheet = wb.getSheetByName(sheet_name);
-                if (sheet) {
-                    wb.deleteSheet(sheet);
-                }
-                break;
-            }
-
-            case 'DELETE_SHEET': {
-                // To rollback a delete, we recreate the sheet with its data
-                const {sheetData} = originalState;
-                wb.create(sheetData.name, sheetData.rowCount, sheetData.columnCount, {
-                    index: wb.getSheets().length,
-                    sheet: sheetData
-                });
-                break;
-            }
-
-            case 'REPLACE_SHEET': {
-                // Restore the original sheet data
-                const {sheetData} = originalState;
-                const existingSheet = wb.getSheetByName(sheetData.name);
-
-                if (existingSheet) {
-                    existingSheet.setRowCount(sheetData.rowCount);
-                    existingSheet.setColumnCount(sheetData.columnCount);
-                    const range = existingSheet.getRange(0, 0, sheetData.rowCount, sheetData.columnCount);
-                    range.setValues(sheetData.cellData);
-                }
-                break;
-            }
+        const cell = targetSheet.getRange(row, col);
+        // Prioritize restoring the formula if it existed, otherwise restore the value.
+        if (originalFormula) {
+          cell.setFormula(originalFormula);
+        } else {
+          if (originalValue === null || originalValue === undefined) cell.clearContent()
+          else cell.setValue(originalValue);
         }
+        break;
+      }
 
-        // Remove from history after successful rollback
-        operationHistory.delete(op.id);
-        return true;
-    } catch (err) {
-        console.error(`[rollbackOperation] Failed to rollback operation ${op.id}`, err);
-        return false;
+      case 'CREATE_SHEET': {
+        const sheet = wb.getSheetByName(originalState.sheetName);
+        if (sheet) {
+          wb.deleteSheet(sheet);
+        }
+        break;
+      }
+
+      case 'DELETE_SHEET':
+      case 'REPLACE_SHEET': {
+        // To roll back a delete or replace, we restore the original sheet snapshot.
+        const { originalSheetSnapshot, originalIndex } = originalState;
+        const existingSheet = wb.getSheetByName(originalSheetSnapshot.name);
+        // If a sheet with the same name was created by the rollback, delete it first.
+        if(existingSheet) {
+            wb.deleteSheet(existingSheet);
+        }
+        wb.create(
+          originalSheetSnapshot.name,
+          originalSheetSnapshot.rowCount,
+          originalSheetSnapshot.columnCount,
+          { index: originalIndex, sheet: originalSheetSnapshot }
+        );
+        break;
+      }
     }
+    return true;
+  } catch (err) {
+    console.error(`[rollbackOperation] Failed to roll back operation ${op.id}`, err);
+    return false;
+  }
 }
 
 /**
- * Clear operation history for a set of operations
+ * Clears the stored history for specific operation IDs.
+ * This should be called after the user confirms their validation choices.
  */
 export function clearOperationHistory(operationIds: string[]): void {
-    operationIds.forEach(id => operationHistory.delete(id));
-}
-
-/**
- * Clear all operation history
- */
-export function clearAllOperationHistory(): void {
-    operationHistory.clear();
+  console.log(`[clearOperationHistory] Clearing history for ${operationIds.length} operations.`);
+  operationIds.forEach(id => operationHistory.delete(id));
 }

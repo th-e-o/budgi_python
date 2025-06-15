@@ -1,6 +1,6 @@
 import React, {createContext, useReducer, useContext, useMemo, type PropsWithChildren} from 'react';
 import { type IWorkbookData } from '@univerjs/core';
-import type {Operation} from "../Shared/Contract.tsx";
+import type {Operation} from "../types/contract.tsx";
 
 type State = {
   workbook: IWorkbookData | null;
