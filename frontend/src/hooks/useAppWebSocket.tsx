@@ -18,7 +18,7 @@ function setupConnection(
 
     connectionPromise = new Promise((resolve, reject) => {
         // Initialize Web Worker for stringifying JSON
-        workerInstance = new Worker('/json-stringifier.worker.js');
+        workerInstance = new Worker('json-stringifier.worker.js');
         console.log("JSON Stringifier Web Worker initialized.");
 
         workerInstance.onmessage = (event) => {

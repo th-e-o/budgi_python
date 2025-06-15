@@ -1,5 +1,4 @@
 import { Shape, type UniverRenderingContext, type IShapeProps } from '@univerjs/presets/preset-sheets-core';
-import type {IViewportInfo} from "@univerjs/engine-render";
 
 interface IFlashProps extends IShapeProps {
     initialColor: [number, number, number];
@@ -24,7 +23,7 @@ export class AnimatedFlashObject extends Shape<IFlashProps> {
     /**
      * This override is now fully correct.
      */
-    protected override _draw(ctx: UniverRenderingContext, bounds?: IViewportInfo) {
+    protected override _draw(ctx: UniverRenderingContext) {
         const { width, height, initialColor, duration } = this;
 
         if (!width || !height) return;

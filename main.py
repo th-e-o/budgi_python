@@ -224,5 +224,5 @@ async def websocket_endpoint(websocket: WebSocket):
             del SESSION_HANDLERS[session_id]
 
 
-app.mount("/assets", StaticFiles(directory="frontend/dist/assets"), name="assets")
-app.mount("/", StaticFiles(directory="frontend/dist", html=True), name="static")
+app.mount("/assets", StaticFiles(directory=ASSETS_DIR), name="assets")
+app.mount("/", StaticFiles(directory=FRONTEND_DIR, html=True), name="static")
