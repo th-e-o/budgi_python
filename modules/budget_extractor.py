@@ -34,12 +34,36 @@ class BudgetExtractor:
             for entry in enriched_data:
                 if 'Montant' in entry:
                     entry['Montant'] = self._normalize_amount(str(entry['Montant']))
-            
+                if 'Date' not in entry:
+                    # Essayer d'extraire l'année de la description si pas de date
+                    year = self._extract_year_from_entry(entry)
+                    if year:
+                        entry['Date'] = str(year)
+                    else:
+                        entry['Date'] = ''
+           
             return enriched_data
             
         except Exception as e:
             logger.error(f"Erreur extraction budget: {str(e)}")
             return []
+    
+    def _extract_year_from_entry(self, entry: Dict) -> Optional[int]:
+        """Extrait l'année d'une entrée budgétaire"""
+        import re
+        year_pattern = re.compile(r'\b(20[2-3][0-9])\b')
+        
+        # Chercher dans tous les champs pertinents
+        search_fields = ['Date', 'Description', 'Axe', 'Nature']
+        
+        for field in search_fields:
+            if field in entry and entry[field]:
+                text = str(entry[field])
+                match = year_pattern.search(text)
+                if match:
+                    return int(match.group(1))
+        
+        return None
     
     def _normalize_amount(self, amount_str: str) -> float:
         """Normalise un montant en nombre"""
@@ -60,11 +84,44 @@ class BudgetExtractor:
             return float(amount_str)
         except ValueError:
             return 0.0
+
+    def _extract_mail_body(self, full_text: str) -> str:
+        """Extrait le corps d'un mail depuis le texte complet"""
+        # Rechercher le marqueur du début du corps
+        body_marker = "--- Contenu du message ---"
+        
+        if body_marker in full_text:
+            # Extraire tout après le marqueur
+            body_start = full_text.find(body_marker) + len(body_marker)
+            body_content = full_text[body_start:].strip()
+            
+            # Rechercher et enlever la section des pièces jointes si présente
+            attachments_marker = "\n\nPièces jointes ("
+            if attachments_marker in body_content:
+                attachments_start = body_content.find(attachments_marker)
+                body_content = body_content[:attachments_start].strip()
+            
+            return body_content
+        
+        # Si pas de marqueur, retourner le texte complet
+        return full_text
+
+    def _is_mail_content(self, text: str) -> bool:
+        """Détermine si le texte provient d'un mail"""
+        return text.strip().startswith("Type de message : Mail")
     
     def _attach_source_phrases(self, budget_data: List[Dict], full_text: str) -> List[Dict]:
         """Attache les phrases sources aux données extraites"""
-        #TODO Modifier le code pour que la source phrase des mails soit seulement issue du corps du mail
-        sentences = self._split_into_sentences(full_text)
+        # Déterminer le texte à utiliser pour la recherche
+        search_text = full_text
+        
+        # Si c'est un mail, utiliser seulement le corps
+        if self._is_mail_content(full_text):
+            search_text = self._extract_mail_body(full_text)
+            logger.info("Mail détecté - recherche des phrases sources dans le corps uniquement")
+        
+        # Découper en phrases
+        sentences = self._split_into_sentences(search_text)
         
         for entry in budget_data:
             montant = entry.get('Montant', '')
@@ -96,14 +153,21 @@ class BudgetExtractor:
         return budget_data
     
     def _split_into_sentences(self, text: str) -> List[str]:
-        """Découpe un texte en phrases"""
-        # Remplacer les sauts de ligne par des espaces
-        text = text.replace('\n', ' ')
+        """Découpe un texte en phrases en utilisant la ponctuation ET les retours à la ligne"""
+        # D'abord découper sur les retours à la ligne
+        lines = text.split('\n')
         
-        # Découper sur la ponctuation
-        sentences = re.split(r'[.!?]+', text)
+        sentences = []
         
-        # Nettoyer et filtrer
-        sentences = [s.strip() for s in sentences if s.strip()]
+        # Pour chaque ligne, découper sur la ponctuation
+        for line in lines:
+            if line.strip():
+                # Découper la ligne sur la ponctuation
+                line_sentences = re.split(r'[.!?]+', line)
+                
+                # Ajouter les phrases non vides
+                for sentence in line_sentences:
+                    if sentence.strip():
+                        sentences.append(sentence.strip())
         
         return sentences
