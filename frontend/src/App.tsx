@@ -105,7 +105,10 @@ function App() {
             role: 'user', content: messageText, timestamp: new Date().toISOString(),
         };
         setMessages(prev => [...prev, userMessage]);
-        sendMessage('user_message', {content: messageText});
+        sendMessage({
+            type: 'user_message',
+            payload: { content: messageText, history: messages }
+        });
     }, [isConnected, sendMessage]);
 
     const handleCellChange = useCallback((changeData: any) => {
@@ -161,6 +164,7 @@ function App() {
                         onFileUpload={handleFileUpload}
                         onProcessBpss={handleProcessBpss}
                         isBpssProcessing={isBpssProcessing}
+                        isConnected={isConnected}  
                     />
 
                     <div className="panel excel-panel">
