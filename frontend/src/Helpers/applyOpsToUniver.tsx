@@ -57,19 +57,22 @@ export function applyOpsToUniver(
                 case 'REPLACE_SHEET': {
                     const worksheetData = op.payload as unknown as IWorksheetData
                     const existingSheet = wb.getSheetByName(worksheetData.name);
+
+                    const maxRow = worksheetData.rowCount
+                    const maxCol = worksheetData.columnCount
+
                     if (existingSheet) {
-                        // If the sheet already exists, we delete it
-                        wb.deleteSheet(existingSheet);
-                    }
-                    // Create a new sheet with the provided data
-                    wb.create(
-                        worksheetData.name,
-                        worksheetData.rowCount,
-                        worksheetData.columnCount,
-                        {
-                            index: wb.getNumSheets(),
+                        existingSheet.setRowCount(maxRow)
+                        existingSheet.setColumnCount(maxCol)
+                        const range = existingSheet.getRange(0, 0, maxRow, maxCol)
+                        range.setValues(worksheetData.cellData)
+                    } else {
+                        wb.create(worksheetData.name, maxRow, maxCol, {
+                            index: wb.getSheets().length,
                             sheet: worksheetData
-                        });
+                        })
+                    }
+
                     break;
                 }
 
@@ -80,4 +83,9 @@ export function applyOpsToUniver(
             console.error(`[applyOpsToUniver] Failed op ${op.id}`, err);
         }
     });
+
+    // setTimeout(() => {
+    //     // For univer to compute formulas
+    //     univer.getFormula().executeCalculation();
+    // }, 500);
 }

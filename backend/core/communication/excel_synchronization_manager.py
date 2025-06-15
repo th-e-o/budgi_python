@@ -52,7 +52,7 @@ class ExcelSyncManager:
                 "description": op['description'],
                 "payload": op['handler_payload']
             } for op in operations]
-            self.handler.apply_updates(handler_ops)
+            task = self.handler.apply_updates(handler_ops)
 
             logger.info(f"Sending {len(ui_ops)} direct update operations to Client ID: {self.client_id}")
             await self.conn_manager.send_to(self.client_id, 'apply_direct_updates', {"operations": ui_ops})
@@ -60,6 +60,9 @@ class ExcelSyncManager:
                 "role": "assistant", "content": "✅ Mise à jour directe appliquée.",
                 "timestamp": datetime.now().isoformat()
             })
+
+            # Finish the task in the background
+            await task
 
     async def _broadcast_full_update(self, message: str):
         """
@@ -81,7 +84,7 @@ class ExcelSyncManager:
 
     async def handle_cell_update(self, payload: Dict):
         """Handles a direct cell edit from the UI."""
-        logger.info(f"Received cell update from Client ID: {self.client_id}, Payload: {payload}")
+        # logger.info(f"Received cell update from Client ID: {self.client_id}, Payload: {payload}")
         self.handler.apply_component_update(payload)
 
     async def handle_validate_op(self, op_id: str):
@@ -93,7 +96,7 @@ class ExcelSyncManager:
                 "description": op['description'],
                 "payload": op['handler_payload']
             }
-            self.handler.apply_updates([handler_op])
+            await self.handler.apply_updates([handler_op])
         else:
             logger.warning(f"Received validation for an unknown operation ID: {op_id}")
             logger.warning(f"Pending operations: {self.pending_operations}")
@@ -115,7 +118,7 @@ class ExcelSyncManager:
         handler_ops = [{
             "type": op['backend_type'], "description": op['description'], "payload": op['handler_payload']
         } for op in ops_to_apply]
-        self.handler.apply_updates(handler_ops)
+        await self.handler.apply_updates(handler_ops)
 
     async def handle_reject_all(self):
         """Rejects all pending operations and notifies the client."""

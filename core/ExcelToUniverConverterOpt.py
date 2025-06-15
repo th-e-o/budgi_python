@@ -135,7 +135,7 @@ class ExcelToUniverConverterOpt:
 
         return style
 
-    def _convert_cell(self, cell: Cell) -> Optional[Dict[str, Any]]:
+    def _convert_cell(self, cell: Cell, explicit_styles: bool) -> Optional[Dict[str, Any]]:
         """Converts a single cell to Univer format using the cached style lookup."""
         univer_style_id = self._get_or_create_style_id_for_cell(cell)
 
@@ -145,7 +145,9 @@ class ExcelToUniverConverterOpt:
         cell_data = {}
         if cell.value is not None:
             if cell.data_type != 'f':
-                cell_data["v"] = self._convert_cell_value(cell.value)
+                value = self._convert_cell_value(cell.value)
+                if value is not None:
+                    cell_data["v"] = value
             if cell.data_type == 'f':
                 cell_value = cell.value if isinstance(cell.value, str) else str(cell.value)
                 cell_data["f"] = f"={cell_value.lstrip('=')}"
@@ -155,7 +157,10 @@ class ExcelToUniverConverterOpt:
                 cell_data["t"] = 1
 
         if univer_style_id:
-            cell_data["s"] = univer_style_id
+            if explicit_styles:
+                cell_data["s"] = self.style_registry.get(univer_style_id)
+            else:
+                cell_data["s"] = univer_style_id
 
         return cell_data if cell_data else None
 
@@ -207,10 +212,11 @@ class ExcelToUniverConverterOpt:
         # Convert the modified sheet using the existing convert_sheet method
         return self.convert_sheet(worksheet)
 
-    def convert_sheet(self, sheet: Worksheet, sheet_id: str = None) -> Dict[str, Any]:
+    def convert_sheet(self, sheet: Worksheet, sheet_id:str = None, explicit_styles=False) -> Dict[str, Any]:
         max_row, max_col = ExcelUtils.get_data_only_range(sheet)
         if sheet_id is None:
             sheet_id = self._generate_sheet_id(sheet.title)
+
         return {
             "id": sheet_id,
             "name": sheet.title,
@@ -221,7 +227,7 @@ class ExcelToUniverConverterOpt:
             "freeze": self._get_freeze_panes(sheet),
             "scrollTop": 0, "scrollLeft": 0,
             "mergeData": self._get_merge_data(sheet),
-            "cellData": self._get_cell_data(sheet, max_row, max_col),
+            "cellData": self._get_cell_data(sheet, max_row, max_col, explicit_styles),
             "rowData": self._get_row_data(sheet, max_row),
             "columnData": self._get_column_data(sheet, max_col),
             "showGridlines": 1 if sheet.sheet_view.showGridLines else 0,
@@ -230,14 +236,14 @@ class ExcelToUniverConverterOpt:
             "rightToLeft": 0
         }
 
-    def _get_cell_data(self, sheet: Worksheet, max_row: int, max_col: int) -> Dict[str, Dict[str, Dict[str, Any]]]:
+    def _get_cell_data(self, sheet: Worksheet, max_row: int, max_col: int, explicit_styles: bool) -> Dict[str, Dict[str, Dict[str, Any]]]:
         cell_data = {}
         for row_idx in range(1, max_row + 1):
             row_data = {}
             for col_idx in range(1, max_col + 1):
                 # Access cell by coordinate to ensure it exists for style processing
                 cell = sheet.cell(row=row_idx, column=col_idx)
-                if cell_info := self._convert_cell(cell):
+                if cell_info := self._convert_cell(cell, explicit_styles):
                     row_data[str(col_idx - 1)] = cell_info
             if row_data:
                 cell_data[str(row_idx - 1)] = row_data

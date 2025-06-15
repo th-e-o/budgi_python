@@ -31,6 +31,7 @@ function App() {
     const ws = useRef<WebSocket | null>(null);
     const jsonWorker = useRef<Worker | null>(null);
     const sheetRef = useRef<UniverSheetHandle | null>(null);
+    const [isCalculating, setIsCalculating] = useState(false);
 
     // --- WebSocket Connection ---
     useEffect(() => {
@@ -121,8 +122,22 @@ function App() {
         };
     }, [dispatch]);
 
+    const handleRecalculate = useCallback(() => {
+        sheetRef.current?.recalculateFormulas();
+
+        // Optional: Add feedback for the user
+        setIsCalculating(true);
+        // We will set this back to false using an event from Univer
+    }, []);
+
+    // Optional: Listen for calculation end to update UI
+    const handleCalculationEnd = useCallback(() => {
+        console.log("Formula calculation has finished.");
+        setIsCalculating(false);
+    }, []);
+
     // --- File Upload Handler ---
-    const handleFileUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const handleFileUpload = useCallback(async (event: React.ChangeEvent<HTMLInputElement>) => {
         const file = event.target.files?.[0];
         if (!file) return;
 
@@ -141,8 +156,8 @@ function App() {
         formData.append('file', file);
 
         const res = await axios.post('/upload', formData);
-        dispatch({ type: 'REPLACE_WORKBOOK', wb: res.data });
-    };
+        dispatch({type: 'REPLACE_WORKBOOK', wb: res.data});
+    }, [sessionId, dispatch]);
 
     const handleProcessBpss = useCallback(async (formData: FormData) => {
         if (!sessionId) {
@@ -160,7 +175,7 @@ function App() {
         await axios.post<IWorkbookData>('/bpss/process', formData);
 
         setIsBpssProcessing(false);
-    }, [dispatch, sessionId]);
+    }, [sessionId]);
 
     // --- Chat Message Sender ---
     const handleSendMessage = useCallback((messageText: string) => {
@@ -253,18 +268,20 @@ function App() {
                     {/* --- Right Panel: Excel Component --- */}
                     <div className="panel excel-panel">
                         <h2>Excel Viewer</h2>
-                        {state.workbook ? (
-                            <UniverSheet
-                                ref={sheetRef}
-                                onCellChange={handleCellChange}
-                                height={700}
-                            />
-                        ) : (
-                            <div className="placeholder">
-                                <p>Upload an Excel file to see it here.</p>
-                                {!isWsConnected && <p style={{color: 'red'}}>Connecting to server...</p>}
-                            </div>
-                        )}
+                        <UniverSheet
+                            ref={sheetRef}
+                            workbookData={state.workbook}
+                            onCellChange={handleCellChange}
+                            onCalculationEnd={handleCalculationEnd}
+                            height={700}
+                        />
+                        <button
+                            onClick={handleRecalculate}
+                            className="small-update-button"
+                            disabled={!isWsConnected || !sessionId || isCalculating}
+                        >
+                            {isCalculating ? 'Calculating...' : 'Recalculate Formulas'}
+                        </button>
                         <button
                             onClick={makeSmallUpdate}
                             className="small-update-button"

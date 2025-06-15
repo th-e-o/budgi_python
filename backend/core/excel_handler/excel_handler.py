@@ -35,9 +35,9 @@ class UpdatedExcelHandler:
     def load_workbook_from_bytes(self, file_bytes: bytes):
         """Loads a workbook, creating both the original and user-modifiable copies."""
         with BytesIO(file_bytes) as stream:
-            self._original_workbook = openpyxl.load_workbook(stream, data_only=True, keep_vba=False)
+            self._original_workbook = openpyxl.load_workbook(stream, data_only=False, keep_vba=False)
             stream.seek(0)
-            self._user_workbook = openpyxl.load_workbook(stream, data_only=True, keep_vba=False)
+            self._user_workbook = openpyxl.load_workbook(stream, data_only=False, keep_vba=False)
         self.logger.info("New workbook loaded. Original and user copies created.")
 
     def reset_to_original(self):
@@ -47,10 +47,10 @@ class UpdatedExcelHandler:
             return
 
         workbook_as_bytes = self.save_workbook_to_bytes(self._original_workbook)
-        self._original_workbook = openpyxl.load_workbook(BytesIO(workbook_as_bytes), data_only=True, keep_vba=False)
+        self._original_workbook = openpyxl.load_workbook(BytesIO(workbook_as_bytes), data_only=False, keep_vba=False)
         self.logger.info("Workbook has been reset to its original state.")
 
-    def apply_updates(self, operations: List[Dict[str, Any]]):
+    async def apply_updates(self, operations: List[Dict[str, Any]]):
         """Applies a list of backend operations to the user workbook."""
         if not self.has_workbook():
             raise ValueError("No workbook loaded to apply updates.")

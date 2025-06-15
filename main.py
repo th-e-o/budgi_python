@@ -137,7 +137,7 @@ async def process_bpss_files(
                 builder=updates
             )
 
-            await updates.commit(require_validation=False, use_compiler=False)
+            await updates.commit(require_validation=False, use_compiler=True)
             logger.info("BPSS processing complete. Broadcasting workbook_update.")
 
             # Send a success message to the chat
