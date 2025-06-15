@@ -92,6 +92,10 @@ async def perform_small_update(
         update_builder = sync_manager.new_update_builder()
         update_builder.update_cell_value("Accueil", 2, 1, "25")
         update_builder.update_cell_value("Accueil", 3, 1, "26")
+        update_builder.update_cell_value("Accueil", 4, 2, 123)
+        update_builder.update_cell_value("Accueil", 4, 1, 342)
+        update_builder.update_cell_value("Accueil", 4, 3, 43432)
+        update_builder.update_cell_value("Accueil", 4, 4, 43)
         await update_builder.commit(require_validation=True)
 
     except Exception as e:
@@ -189,7 +193,7 @@ async def websocket_endpoint(websocket: WebSocket):
                     await session_sync_manager.handle_cell_update(payload)
 
                 elif msg_type == 'validate_change':
-                    await session_sync_manager.handle_validate_op(payload.get('id'))
+                    await session_sync_manager.handle_validate_op(payload)
 
                 elif msg_type == 'reject_change':
                     await session_sync_manager.handle_reject_op(payload.get('id'))

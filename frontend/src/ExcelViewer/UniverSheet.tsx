@@ -85,11 +85,6 @@ const UniverSheet = forwardRef<UniverSheetHandle, Props>(
                 onCalculationEnd?.();
             }));
 
-
-            disposables.push(formula.calculationEnd(() => {
-                onCalculationEnd?.();
-            }));
-
             disposables.push(formula.calculationStart((forceCalculation) => {
                 const currentFormula = univerApiRef.current?.getFormula();
                 if (forceCalculation) {

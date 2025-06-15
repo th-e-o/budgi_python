@@ -84,11 +84,18 @@ class ExcelSyncManager:
 
     async def handle_cell_update(self, payload: Dict):
         """Handles a direct cell edit from the UI."""
-        # logger.info(f"Received cell update from Client ID: {self.client_id}, Payload: {payload}")
+        logger.info(f"Received cell update from Client ID: {self.client_id}, Payload: {payload}")
         self.handler.apply_component_update(payload)
 
     async def handle_validate_op(self, op_id: str):
-        """Applies a single, user-validated operation and broadcasts a full update."""
+        """
+        Handles user validated and rejected requests of the following format:
+
+            {
+                "accepted": ["9c2e0ed6-f744-4eea-84fe-1c63e9645e92"],
+                "refused": ["ddbeaa31-89d4-41a8-b53b-04147a087455"]
+            }
+        """
         op = self.pending_operations.pop(op_id, None)
         if op:
             handler_op = {

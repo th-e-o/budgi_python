@@ -22,13 +22,17 @@ function captureStateBeforeOperation(op: Operation): any {
             if (!targetSheet) return null;
 
             const cell = targetSheet.getRange(row, col);
+            const originalValue = cell.getValue();
+            const originalFormula = cell.getFormula();
+
             return {
                 type: 'UPDATE_CELL',
                 sheet,
                 row,
                 col,
-                originalValue: cell.getValue(),
-                originalFormula: cell.getFormula()
+                originalValue: originalValue,
+                originalFormula: originalFormula,
+                hadValue: originalValue !== null && originalValue !== undefined && originalValue !== ''
             };
         }
 
@@ -178,7 +182,19 @@ export function applyOpsToUniver(
 
                 case 'UPDATE_CELL': {
                     const {sheet, row, col, value} = op.payload as any;
-                    wb.getSheetByName(sheet)?.getRange(row, col).setValue(value.v);
+                    const targetSheet = wb.getSheetByName(sheet);
+                    if (!targetSheet) {
+                        console.warn(`[applyOpsToUniver] Sheet ${sheet} not found`);
+                        break;
+                    }
+                    const range = targetSheet.getRange(row, col);
+                    if (!range) {
+                        console.warn(`[applyOpsToUniver] Range [${row},${col}] not found in sheet ${sheet}`);
+                        break;
+                    }
+                    // Handle different value types
+                    const cellValue = value?.v !== undefined ? value.v : value;
+                    range.setValue(cellValue);
                     break;
                 }
 
@@ -234,15 +250,18 @@ export function rollbackOperation(op: Operation): boolean {
     try {
         switch (originalState.type) {
             case 'UPDATE_CELL': {
-                const {sheet, row, col, originalValue, originalFormula} = originalState;
+                const {sheet, row, col, originalValue, originalFormula, hadValue} = originalState;
                 const targetSheet = wb.getSheetByName(sheet);
                 if (!targetSheet) return false;
 
                 const cell = targetSheet.getRange(row, col);
                 if (originalFormula) {
                     cell.setValue(originalFormula);
-                } else {
+                } else if (hadValue) {
                     cell.setValue(originalValue);
+                } else {
+                    // Clear the cell if it was originally empty
+                    cell.setValue('');
                 }
                 break;
             }

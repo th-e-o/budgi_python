@@ -14,7 +14,7 @@ type ValidationStatus = 'pending' | 'accepted' | 'refused';
 interface ValidationItem {
   operation: Operation;
   status: ValidationStatus;
-  originalState?: any; // Store original state for rollback
+  applied: boolean; // Track whether this operation has been applied
 }
 
 export default function ValidationToolbar({ ws }: Props) {
@@ -31,10 +31,11 @@ export default function ValidationToolbar({ ws }: Props) {
     const newValidations = pendingOps.map(op => ({
       operation: op,
       status: 'pending' as ValidationStatus,
+      applied: true, // Operations are applied immediately for preview
     }));
     setValidations(newValidations);
 
-    // Apply all operations initially (can be rolled back later)
+    // Apply all operations immediately when they arrive
     if (pendingOps.length > 0) {
       applyOpsToUniver(pendingOps);
     }
@@ -84,43 +85,64 @@ export default function ValidationToolbar({ ws }: Props) {
     }
   };
 
-  const updateStatus = (index: number, status: ValidationStatus) => {
+  const updateStatus = (index: number, newStatus: ValidationStatus) => {
     setValidations(prev => {
       const updated = [...prev];
       const item = updated[index];
 
-      // If changing from accepted to refused or vice versa, we need to handle the operation
-      if (item.status === 'accepted' && status === 'refused') {
-        // Rollback the operation
-        handleRollback(item.operation);
-      } else if (item.status === 'refused' && status === 'accepted') {
-        // Apply the operation
+      // Handle state transitions
+      if (newStatus === 'refused' && item.applied) {
+        // Rollback the operation when refusing
+        const success = rollbackOperation(item.operation);
+        if (success) {
+          item.applied = false;
+        } else {
+          console.error('Failed to rollback operation:', item.operation);
+          // Don't update status if rollback failed
+          return prev;
+        }
+      } else if (newStatus === 'accepted' && !item.applied) {
+        // Re-apply if it was previously refused
         applyOpsToUniver([item.operation]);
+        item.applied = true;
       }
 
-      updated[index] = { ...item, status };
+      // Update the status
+      item.status = newStatus;
+      updated[index] = { ...item };
       return updated;
     });
   };
 
-  const handleRollback = (op: Operation) => {
-    const success = rollbackOperation(op);
-    if (!success) {
-      console.error('Failed to rollback operation:', op);
-    }
-  };
-
   const acceptAll = () => {
-    setValidations(prev => prev.map(v => ({ ...v, status: 'accepted' })));
+    setValidations(prev => {
+      const updated = [...prev];
+      updated.forEach((item) => {
+        if (item.status !== 'accepted') {
+          if (!item.applied) {
+            applyOpsToUniver([item.operation]);
+            item.applied = true;
+          }
+          item.status = 'accepted';
+        }
+      });
+      return updated;
+    });
   };
 
   const refuseAll = () => {
-    setValidations(prev => prev.map(v => ({ ...v, status: 'refused' })));
-    // Rollback all operations
-    validations.forEach(v => {
-      if (v.status !== 'refused') {
-        handleRollback(v.operation);
-      }
+    setValidations(prev => {
+      const updated = [...prev];
+      updated.forEach((item) => {
+        if (item.status !== 'refused') {
+          if (item.applied) {
+            rollbackOperation(item.operation);
+            item.applied = false;
+          }
+          item.status = 'refused';
+        }
+      });
+      return updated;
     });
   };
 
@@ -191,6 +213,7 @@ export default function ValidationToolbar({ ws }: Props) {
       <div className="toolbar-header">
         <h3>Pending Validations ({validations.length})</h3>
         <div className="toolbar-actions">
+          <span className="toolbar-hint">Click items to navigate • Accept to apply changes</span>
           <button
             className="bulk-action-btn accept-all"
             onClick={acceptAll}
@@ -217,7 +240,7 @@ export default function ValidationToolbar({ ws }: Props) {
         {validations.map((item, index) => (
           <div
             key={item.operation.id}
-            className={`validation-item ${selectedIndex === index ? 'selected' : ''}`}
+            className={`validation-item ${selectedIndex === index ? 'selected' : ''} ${item.applied ? 'applied' : ''}`}
             onClick={() => handleValidationClick(index, item)}
           >
             <div
@@ -235,7 +258,7 @@ export default function ValidationToolbar({ ws }: Props) {
                     e.stopPropagation();
                     updateStatus(index, 'accepted');
                   }}
-                  title="Accept"
+                  title={item.applied ? "Operation applied" : "Accept and apply this change"}
                 >
                   ✓
                 </button>
@@ -245,7 +268,7 @@ export default function ValidationToolbar({ ws }: Props) {
                     e.stopPropagation();
                     updateStatus(index, 'refused');
                   }}
-                  title="Refuse"
+                  title={item.applied ? "Refuse and rollback this change" : "Refuse this change"}
                 >
                   ✗
                 </button>
