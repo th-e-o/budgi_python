@@ -87,8 +87,9 @@ class ExcelSyncManager:
         try:
             logger.info(f"process_uploaded_file appelé pour: {file.filename}")
             
-            # ✅ CORRECTION : Pas besoin de SESSION_CHAT_SERVICES pour l'instant
-            # On va faire une version simple qui lit juste le fichier
+            session_id = self._get_session_id_from_managers()
+            from main import SESSION_CHAT_SERVICES
+            chat_service = SESSION_CHAT_SERVICES.get(session_id)
             
             # Lire le fichier
             file_content_bytes = await file.read()
@@ -112,35 +113,92 @@ class ExcelSyncManager:
         try:
             logger.info(f"process_with_llm appelé")
             
-            # ✅ VERSION SIMPLE : Pas de LLM pour l'instant, juste un résumé
-            file_name = context.get('file_name', 'Fichier inconnu')
-            user_message = context.get('user_message', '')
-            file_content = context.get('file_content', '')
+            session_id = self._get_session_id_from_managers()
+            from main import SESSION_CHAT_SERVICES
+            chat_service = SESSION_CHAT_SERVICES.get(session_id)
             
-            # Construire une réponse simple
-            response_parts = [
-                f"📄 **Fichier analysé : {file_name}**",
-                f"📏 **Taille du contenu :** {len(file_content)} caractères"
-            ]
-            
-            if user_message:
-                response_parts.append(f"💬 **Votre message :** {user_message}")
-            
-            if file_content:
-                # Aperçu du contenu
-                preview = file_content[:300] + "..." if len(file_content) > 300 else file_content
-                response_parts.append(f"📋 **Aperçu du contenu :**\n```\n{preview}\n```")
-            
-            response = "\n\n".join(response_parts)
-            response += "\n\n✨ *Chat-LLM en cours d'intégration - Version test*"
-            
-            logger.info(f"Réponse générée: {len(response)} caractères")
-            return response
+            # Construire le message enrichi pour le LLM
+            llm_message = self._build_enriched_message(context)
+                
+            # Utiliser ChatService pour traiter avec le LLM
+            llm_response = await chat_service.process_user_message(
+                llm_message, context.get('chat_history', [])
+            )
+                
+            logger.info(f"Réponse LLM générée: {len(llm_response)} caractères")
+            return llm_response
             
         except Exception as e:
             logger.error(f"Erreur process_with_llm: {str(e)}", exc_info=True)
             return f"❌ Erreur lors du traitement : {str(e)}"
     
+    def _build_enriched_message(self, context: dict) -> str:
+        """Construit un message enrichi pour le LLM avec extraction budgétaire"""
+        parts = []
+        
+        file_name = context.get('file_name', 'Fichier inconnu')
+        user_message = context.get('user_message', '')
+        file_content = context.get('file_content', '')
+        
+        # Message utilisateur s'il existe
+        if user_message:
+            parts.append(f"Question de l'utilisateur : {user_message}")
+        
+        # Informations sur le fichier
+        parts.append(f"\nFichier envoyé : {file_name}")
+        parts.append(f"Taille : {len(file_content)} caractères")
+        
+        # Contenu du fichier avec instruction d'analyse
+        if file_content:
+            parts.append(f"\nContenu du fichier à analyser :")
+            parts.append(f"```\n{file_content}\n```")
+            
+            # Instructions spécifiques selon le type de fichier
+            file_ext = file_name.split('.')[-1].lower() if '.' in file_name else ''
+            
+            if file_ext in ['pdf', 'docx', 'txt']:
+                parts.append(
+                    "\n📊 Instructions d'analyse :"
+                    "\n- Identifiez toutes les données budgétaires (montants, descriptions, dates)"
+                    "\n- Extrayez les informations financières importantes"
+                    "\n- Proposez une synthèse des éléments budgétaires détectés"
+                    "\n- Si vous détectez des anomalies ou points d'attention, signalez-les"
+                )
+            elif file_ext == 'msg':
+                parts.append(
+                    "\n📧 Instructions pour l'email :"
+                    "\n- Résumez le contenu principal de l'email"
+                    "\n- Identifiez les éléments budgétaires ou financiers mentionnés"
+                    "\n- Extrayez les informations importantes pour le suivi budgétaire"
+                )
+        
+        # Contexte additionnel
+        parts.append(
+            "\n✨ Vous êtes BudgiBot, assistant budgétaire expert. "
+            "Fournissez une analyse professionnelle et détaillée."
+        )
+        
+        return "\n".join(parts)
+
+    def _get_session_id_from_managers(self) -> str:
+        """Récupère l'ID de session en parcourant les managers"""
+        try:
+            from main import SESSION_SYNC_MANAGERS
+            for session_id, manager in SESSION_SYNC_MANAGERS.items():
+                if manager.client_id == self.client_id:
+                    return session_id
+            
+            # Si pas trouvé, prendre la première session disponible
+            if SESSION_SYNC_MANAGERS:
+                first_session = list(SESSION_SYNC_MANAGERS.keys())[0]
+                logger.warning(f"Session pour client {self.client_id} non trouvée, utilisation de {first_session}")
+                return first_session
+                
+            raise Exception("Aucune session disponible")
+        except Exception as e:
+            logger.error(f"Erreur _get_session_id_from_managers: {str(e)}")
+            raise Exception("Impossible de récupérer l'ID de session")
+
     async def send_user_message_to_chat(self, file_name: str, message: str):
         """Envoie le message utilisateur au chat"""
         try:
@@ -165,7 +223,7 @@ class ExcelSyncManager:
             await self.conn_manager.send_to(self.client_id, "chat_message", {
                 "role": "assistant",
                 "content": response,
-                "timestamp": datetime.datetime.utcnow().isoformat()
+                "timestamp": datetime.utcnow().isoformat()
             })
             logger.info(f"Réponse envoyée: {len(response)} caractères")
             

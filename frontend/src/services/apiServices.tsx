@@ -1,8 +1,8 @@
 import axios from 'axios';
 import type { IWorkbookData } from '@univerjs/core';
-import type { ChatMessage } from '../types/contract';
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || '';
+
 console.log(`Configuring API calls to: '${API_BASE_URL}'`);
 
 const getBaseURL = () => {
@@ -40,26 +40,3 @@ export interface ChatUploadResponse {
     status: string;
     message: string;
 }
-
-export const uploadFileAndChat = async (
-    file: File, 
-    message: string = "", 
-    chatHistory: ChatMessage[] = []
-): Promise<ChatUploadResponse> => {
-    const formData = new FormData();
-    formData.append('file', file);
-    formData.append('message', message);
-    formData.append('history', JSON.stringify(chatHistory));
-    
-    const response = await fetch('/chat/upload_and_message', {
-        method: 'POST',
-        body: formData,
-    });
-    
-    if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(errorData.detail || 'Erreur lors de l\'upload du fichier');
-    }
-    
-    return response.json();
-};
