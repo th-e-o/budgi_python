@@ -18,6 +18,7 @@ class ExcelSyncManager:
 
     def __init__(self, client_id: str, handler: UpdatedExcelHandler, conn_manager: ConnectionManager):
         self.client_id = client_id
+        self._session_id = None
         self.handler = handler
         self.conn_manager = conn_manager
         self.pending_operations: Dict[str, Dict] = {}
@@ -81,114 +82,109 @@ class ExcelSyncManager:
             "role": "assistant", "content": f"✅ {message}", "timestamp": datetime.now().isoformat()
         })
 
-    async def process_uploaded_file(self, file: UploadFile) -> str:
+    async def process_uploaded_file(self, file) -> str:
         """Traite un fichier uploadé et retourne son contenu textuel"""
         try:
-            # Récupérer le service de chat de la session
-            session_id = self._get_session_id()
-            chat_service = SESSION_CHAT_SERVICES.get(session_id)
+            logger.info(f"process_uploaded_file appelé pour: {file.filename}")
             
-            if not chat_service:
-                raise Exception("Service de chat non initialisé")
+            # ✅ CORRECTION : Pas besoin de SESSION_CHAT_SERVICES pour l'instant
+            # On va faire une version simple qui lit juste le fichier
             
-            # Lire le contenu du fichier
+            # Lire le fichier
             file_content_bytes = await file.read()
+            logger.info(f"Fichier lu: {len(file_content_bytes)} bytes")
             
-            # Traiter directement depuis les bytes
-            file_content_text = chat_service._read_file_content_from_bytes(
-                file_content_bytes, file.filename
-            )
-            
-            return file_content_text
+            # Version simple : décoder en UTF-8
+            try:
+                file_content_text = file_content_bytes.decode('utf-8', errors='replace')
+                logger.info(f"Contenu décodé: {len(file_content_text)} caractères")
+                return file_content_text
+            except Exception as decode_error:
+                logger.error(f"Erreur décodage: {decode_error}")
+                return f"Erreur lors du décodage du fichier: {str(decode_error)}"
             
         except Exception as e:
-            logger.error(f"Erreur traitement fichier {file.filename}: {str(e)}")
+            logger.error(f"Erreur process_uploaded_file: {str(e)}", exc_info=True)
             raise
     
-    async def process_with_llm(self, context: Dict) -> str:
-        """Traite le contexte avec le LLM (sans contexte Excel)"""
+    async def process_with_llm(self, context: dict) -> str:
+        """Traite le contexte avec le LLM - Version simple"""
         try:
-            session_id = self._get_session_id()
-            chat_service = SESSION_CHAT_SERVICES.get(session_id)
+            logger.info(f"process_with_llm appelé")
             
-            if not chat_service:
-                raise Exception("Service de chat non initialisé")
+            # ✅ VERSION SIMPLE : Pas de LLM pour l'instant, juste un résumé
+            file_name = context.get('file_name', 'Fichier inconnu')
+            user_message = context.get('user_message', '')
+            file_content = context.get('file_content', '')
             
-            # Construire le message simple pour le LLM
-            llm_message = self._build_simple_message(context)
+            # Construire une réponse simple
+            response_parts = [
+                f"📄 **Fichier analysé : {file_name}**",
+                f"📏 **Taille du contenu :** {len(file_content)} caractères"
+            ]
             
-            # Traiter avec le LLM
-            llm_response = await chat_service.process_user_message(
-                llm_message, context['chat_history']
-            )
+            if user_message:
+                response_parts.append(f"💬 **Votre message :** {user_message}")
             
-            return llm_response
+            if file_content:
+                # Aperçu du contenu
+                preview = file_content[:300] + "..." if len(file_content) > 300 else file_content
+                response_parts.append(f"📋 **Aperçu du contenu :**\n```\n{preview}\n```")
+            
+            response = "\n\n".join(response_parts)
+            response += "\n\n✨ *Chat-LLM en cours d'intégration - Version test*"
+            
+            logger.info(f"Réponse générée: {len(response)} caractères")
+            return response
             
         except Exception as e:
-            logger.error(f"Erreur traitement LLM: {str(e)}")
-            raise
-    
-    def _build_simple_message(self, context: Dict) -> str:
-        """Construit un message simple avec fichier et message utilisateur"""
-        parts = []
-        
-        # Message utilisateur
-        if context.get('user_message'):
-            parts.append(f"Question de l'utilisateur : {context['user_message']}")
-        
-        # Informations sur le fichier
-        if context.get('file_name'):
-            parts.append(f"\nFichier envoyé : {context['file_name']}")
-            
-            # Contenu du fichier
-            if context.get('file_content'):
-                parts.append(f"\nContenu du fichier :")
-                
-                # Aperçu du contenu
-                content = context['file_content']
-                if len(content) > 1000:
-                    parts.append(f"{content[:1000]}...")
-                else:
-                    parts.append(content)
-        
-        return "\n".join(parts)
+            logger.error(f"Erreur process_with_llm: {str(e)}", exc_info=True)
+            return f"❌ Erreur lors du traitement : {str(e)}"
     
     async def send_user_message_to_chat(self, file_name: str, message: str):
         """Envoie le message utilisateur au chat"""
-        user_message_content = f"📄 Fichier envoyé : {file_name}"
-        if message:
-            user_message_content += f"\nMessage : {message}"
-        
-        await self.conn_manager.send_to(self.client_id, "chat_message", {
-            "role": "user",
-            "content": user_message_content,
-            "timestamp": datetime.datetime.utcnow().isoformat(),
-            "file_name": file_name
-        })
+        try:
+            user_content = f"📄 Fichier envoyé : {file_name}"
+            if message:
+                user_content += f"\nMessage : {message}"
+            
+            await self.conn_manager.send_to(self.client_id, "chat_message", {
+                "role": "user",
+                "content": user_content,
+                "timestamp": datetime.utcnow().isoformat(),
+                "file_name": file_name
+            })
+            logger.info(f"Message utilisateur envoyé: {file_name}")
+            
+        except Exception as e:
+            logger.error(f"Erreur send_user_message_to_chat: {str(e)}", exc_info=True)
     
     async def send_llm_response(self, response: str):
         """Envoie la réponse du LLM au chat"""
-        await self.conn_manager.send_to(self.client_id, "chat_message", {
-            "role": "assistant",
-            "content": response,
-            "timestamp": datetime.datetime.utcnow().isoformat()
-        })
+        try:
+            await self.conn_manager.send_to(self.client_id, "chat_message", {
+                "role": "assistant",
+                "content": response,
+                "timestamp": datetime.datetime.utcnow().isoformat()
+            })
+            logger.info(f"Réponse envoyée: {len(response)} caractères")
+            
+        except Exception as e:
+            logger.error(f"Erreur send_llm_response: {str(e)}", exc_info=True)
     
     async def send_error_to_chat(self, error_message: str):
         """Envoie un message d'erreur au chat"""
-        await self.conn_manager.send_to(self.client_id, "chat_message", {
-            "role": "assistant",
-            "content": f"❌ {error_message}",
-            "error": True,
-            "timestamp": datetime.datetime.utcnow().isoformat()
-        })
-    
-    def _get_session_id(self) -> str:
-        """Récupère l'ID de session pour ce sync manager"""
-        for session_id, manager in SESSION_SYNC_MANAGERS.items():
-            if manager.client_id == self.client_id:
-                return session_id
-        raise Exception("Session non trouvée")
+        try:
+            await self.conn_manager.send_to(self.client_id, "chat_message", {
+                "role": "assistant",
+                "content": f"❌ {error_message}",
+                "error": True,
+                "timestamp": datetime.datetime.utcnow().isoformat()
+            })
+            logger.info(f"Erreur envoyée au chat: {error_message}")
+            
+        except Exception as e:
+            logger.error(f"Erreur send_error_to_chat: {str(e)}", exc_info=True)
 
     # --- Handlers for Incoming WebSocket Messages ---
 
