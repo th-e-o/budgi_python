@@ -56,6 +56,6 @@ export type ServerMessage =
 // --- Client -> Server Messages ---
 
 export type ClientMessage =
-  | { type: 'user_message'; payload: { content: string } }
+  | { type: 'user_message'; payload: { content: string; history?: ChatMessage[]; } }
   | { type: 'cell_update'; payload: any } // Keeping 'any' for now as the Univer change format is complex
   | { type: 'validate_changes'; payload: { accepted: string[]; refused: string[] } };

@@ -1,3 +1,5 @@
+import type { ChatMessage } from '../types/contract';
+
 export interface ChatUploadResponse {
     status: string;
     message: string;

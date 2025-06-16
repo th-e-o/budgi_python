@@ -99,15 +99,34 @@ function App() {
     const handleSendMessage = useCallback((messageText: string) => {
         if (!isConnected) {
             console.warn('WebSocket is not connected. Cannot send message.');
+            setMessages(prev => [...prev, {
+                role: 'assistant',
+                content: '❌ Impossible d\'envoyer le message : connexion fermée. Veuillez actualiser la page.',
+                timestamp: new Date().toISOString(),
+                error: true,
+            }]);
             return;
         }
-        const userMessage: ChatMessage = {
-            role: 'user', content: messageText, timestamp: new Date().toISOString(),
-        };
-        setMessages(prev => [...prev, userMessage]);
-        sendMessage({
-            type: 'user_message',
-            payload: { content: messageText, history: messages }
+
+        // Utiliser une fonction pour accéder à l'état actuel
+        setMessages(prev => {
+            const currentHistory = prev; // État actuel des messages
+            
+            // Créer le nouveau message utilisateur
+            const newUserMessage = {
+                role: 'user' as const,
+                content: messageText,
+                timestamp: new Date().toISOString(),
+            };
+
+            // Envoyer avec l'historique ACTUEL
+            sendMessage('user_message', {
+                content: messageText,
+                history: currentHistory  // ← L'historique actuel AVANT le nouveau message
+            });
+
+            // Retourner le nouvel état avec le message ajouté
+            return [...prev, newUserMessage];
         });
     }, [isConnected, sendMessage]);
 

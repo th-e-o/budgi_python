@@ -143,9 +143,8 @@ const ChatPanel: React.FC<ChatPanelProps> = ({
 
             {/* BPSS Tool Panel */}
             <BpssToolPanel
-                onProcessBpss={onProcessBpss}
+                onProcess={onProcessBpss}
                 isProcessing={isBpssProcessing}
-                disabled={!isConnected}
             />
         </div>
     );

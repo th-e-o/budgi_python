@@ -1,5 +1,6 @@
 import axios from 'axios';
 import type { IWorkbookData } from '@univerjs/core';
+import type { ChatMessage } from '../types/contract';
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || '';
 console.log(`Configuring API calls to: '${API_BASE_URL}'`);

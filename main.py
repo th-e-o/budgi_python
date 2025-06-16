@@ -16,6 +16,8 @@ from backend.core.excel_handler.excel_handler import UpdatedExcelHandler
 from core.ExcelToUniverConverterOpt import ExcelToUniverConverterOpt
 from backend.modules.bpss_tool import BPSSTool
 
+from core.chat_service import ChatService
+
 # --- Basic Setup ---
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -39,6 +41,7 @@ bpss_tool = BPSSTool()
 
 SESSION_HANDLERS: Dict[str, UpdatedExcelHandler] = {}
 SESSION_SYNC_MANAGERS: Dict[str, ExcelSyncManager] = {}
+SESSION_CHAT_SERVICES: Dict[str, ChatService] = {}
 
 async def get_session_manager(session_id: Annotated[str | None, Cookie()] = None) -> ExcelSyncManager:
     """A FastAPI dependency that retrieves the user's session manager via cookie."""
@@ -46,12 +49,25 @@ async def get_session_manager(session_id: Annotated[str | None, Cookie()] = None
         raise HTTPException(status_code=401, detail="Invalid or expired session. Please refresh.")
     return SESSION_SYNC_MANAGERS[session_id]
 
+def get_session_data(session_id: str) -> Dict[str, Any]:
+    """Récupère ou initialise les données de session"""
+    if session_id not in SESSION_DATA:
+        SESSION_DATA[session_id] = {
+            'last_file_content': None,
+            'last_file_name': None,
+            'extracted_budget_data': None,
+            'tags': None
+        }
+    return SESSION_DATA[session_id]
+
 # --- Welcome Message from Streamlit Legacy ---
 WELCOME_MESSAGE = """Bonjour,\n
-je peux vous aider à :\n
+Je peux vous aider à :\n
 • **Analyser vos fichiers Excel** - Chargez un fichier .xlsx pour commencer\n
 • **Extraire des données budgétaires** - À partir de PDF, Word, emails ou textes\n
-• **Utiliser l'outil BPSS** - Pour traiter vos fichiers PP-E-S, DPP18 et BUD45
+• **Utiliser l'outil BPSS** - Pour traiter vos fichiers PP-E-S, DPP18 et BUD45 \n
+• **Mapper des données budgétaires** - Associer des entrées aux cellules Excel\n
+Vous pouvez envoyer des fichiers (PDF, Word, TXT, MSG) ou poser des questions !
 """
 
 
@@ -160,6 +176,96 @@ async def process_bpss_files(
         })
         raise HTTPException(status_code=500, detail=f"BPSS processing failed: {str(e)}")
 
+@app.post("/chat/upload_and_message")
+async def chat_with_file(
+    file: UploadFile = File(...),
+    message: str = Form(""),
+    history: str = Form("[]"),  # Historique JSON stringifié
+    sync_manager: ExcelSyncManager = Depends(get_session_manager)
+):
+    """Upload fichier + message, traite via LLM, répond via WebSocket (sans contexte Excel automatique)"""
+    
+    try:
+        # 1. Validation du fichier
+        file_ext = Path(file.filename).suffix.lower()
+        if file_ext not in ['.pdf', '.docx', '.txt', '.msg']:
+            raise HTTPException(status_code=400, detail=f"Type de fichier non supporté: {file_ext}")
+        
+        # 2. Traiter le fichier
+        file_content = await sync_manager.process_uploaded_file(file)
+        
+        # 3. Parser l'historique
+        try:
+            chat_history = json.loads(history) if history else []
+        except json.JSONDecodeError:
+            chat_history = []
+        
+        # 4. Construire le contexte simple (sans Excel)
+        context = {
+            'user_message': message,
+            'file_content': file_content,
+            'file_name': file.filename,
+            'chat_history': chat_history
+        }
+        
+        # 5. Traitement LLM
+        llm_response = await sync_manager.process_with_llm(context)
+        logger.info(f"LLM response generated: {len(llm_response)} characters")
+        
+        # 6. Envoyer les réponses via WebSocket
+        await sync_manager.send_user_message_to_chat(file.filename, message)
+        await sync_manager.send_llm_response(llm_response)
+        
+        # 7. Retour simple d'acquittement
+        return {
+            "status": "processing", 
+            "message": f"Fichier {file.filename} reçu, réponse en cours via chat"
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Erreur chat_with_file: {str(e)}", exc_info=True)
+        # Envoyer l'erreur via WebSocket aussi
+        await sync_manager.send_error_to_chat(f"Erreur lors du traitement: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+async def handle_user_message(session_id: str, client_id: str, payload: Dict):
+    """Traite un message utilisateur avec le LLM"""
+    try:
+        message_content = payload.get('content', '')
+        frontend_history = payload.get('history', [])
+        
+        if not message_content.strip():
+            return
+        
+        # Récupérer le service de chat de la session
+        chat_service = SESSION_CHAT_SERVICES.get(session_id)
+        
+        if not chat_service:
+            raise Exception("Service de chat non initialisé")
+        
+        # Traiter le message avec le LLM
+        llm_response = await chat_service.process_user_message(
+            message_content, frontend_history
+        )
+        
+        # Envoyer la réponse au client
+        await conn_manager.send_to(client_id, "chat_message", {
+            "role": "assistant",
+            "content": llm_response,
+            "timestamp": datetime.datetime.utcnow().isoformat()
+        })
+        
+    except Exception as e:
+        logger.error(f"Erreur lors du traitement du message utilisateur: {str(e)}", exc_info=True)
+        await conn_manager.send_to(client_id, "chat_message", {
+            "role": "assistant",
+            "content": f"❌ Désolé, je n'ai pas pu traiter votre message : {str(e)}",
+            "error": True,
+            "timestamp": datetime.datetime.utcnow().isoformat()
+        })
+
 
 # --- WebSocket Endpoint ---
 @app.websocket("/ws")
@@ -168,8 +274,11 @@ async def websocket_endpoint(websocket: WebSocket):
 
     session_handler = UpdatedExcelHandler()
     session_sync_manager = ExcelSyncManager(client_id, session_handler, conn_manager)
+    session_chat_service = ChatService() 
+
     SESSION_HANDLERS[session_id] = session_handler
     SESSION_SYNC_MANAGERS[session_id] = session_sync_manager
+    SESSION_CHAT_SERVICES[session_id] = session_chat_service
 
     try:
         # Send to the client its new session_id
@@ -196,12 +305,8 @@ async def websocket_endpoint(websocket: WebSocket):
                     await session_sync_manager.handle_validate_op(payload)
 
                 elif msg_type == 'user_message':
-                     # Placeholder for future LLM interaction
-                    await conn_manager.send_to(client_id, "chat_message", {
-                        "role": "assistant",
-                        "content": f"Received your message: '{message['payload']['content']}'. LLM logic is not yet connected.",
-                        "timestamp": datetime.datetime.utcnow().isoformat()
-                    })
+                    await handle_user_message(session_id, client_id, payload)
+            
             except json.JSONDecodeError:
                 logger.warning(f"Received invalid JSON via WebSocket: {data}")
             except KeyboardInterrupt:

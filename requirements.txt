@@ -36,3 +36,6 @@ pytest-asyncio>=0.21.0
 
 # frontend
 uvicorn >= 0.34.3
+
+#Pour FormData
+python-multipart
